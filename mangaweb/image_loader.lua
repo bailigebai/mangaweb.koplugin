@@ -11,6 +11,17 @@ local function canceled_handle()
     return { cancel = function() return true end }
 end
 
+local function cache_raw_key(job)
+    local parts = { job.url }
+    for _, key in ipairs({ "site_id", "comic_id", "chapter_id", "index", "url" }) do
+        local value = job.cache_identity[key]
+        if key == "index" then value = tonumber(value) or value end
+        value = tostring(value or "")
+        parts[#parts + 1] = #value .. ":" .. value
+    end
+    return table.concat(parts, "\0")
+end
+
 local function content_extension(body)
     if type(body) ~= "string" then return nil end
     if body:sub(1, 3) == "\255\216\255" then return "jpg" end
@@ -201,6 +212,12 @@ function ImageLoader:_start_file(job)
     finalize()
 end
 
+function ImageLoader:_release_retained_pin(raw)
+    local identity = raw.retained_cache_identity
+    raw.retained_cache_identity = nil
+    if identity and self.page_cache then pcall(self.page_cache.unpin, self.page_cache, identity) end
+end
+
 function ImageLoader:_drop(job)
     if job.dropped then
         if job.output and (not job.active or not job.processing) then
@@ -235,7 +252,8 @@ function ImageLoader:_drop(job)
                 pcall(owner.operation.cancel, owner.operation)
             end
         elseif (raw.retain_count or 0) == 0 then
-            if raw.path and not raw.persistent then self.temp_files:remove(raw.path) end
+            self:_release_retained_pin(raw)
+            if raw.path and not raw.persistent and not raw.borrowed then self.temp_files:remove(raw.path) end
             raw.path = nil
             if session.raw_by_url[job.raw_key] == raw then session.raw_by_url[job.raw_key] = nil end
         end
@@ -554,14 +572,21 @@ function ImageLoader:request(generation, spec, callbacks)
         local pinned, value = pcall(self.page_cache.pin, self.page_cache, job.cache_identity)
         job.cache_pinned = pinned and value ~= false
     end
-    -- A CDN may reuse one URL for different page identities. Their persistent
-    -- files and pins must not accidentally share the URL-only session entry.
+    -- Page identity stays stable across filter epochs. Different pages using
+    -- one CDN URL still have separate originals, while previews and settings
+    -- changes share the owning raw object and consume its temporary retention.
     job.raw_key = self.page_cache and job.cache_identity
-        and (job.url .. "\0" .. job.key) or job.url
+        and cache_raw_key(job) or job.url
     job.raw = session.raw_by_url[job.raw_key] or { refs = 0, attempts = 0, retain_count = 0 }
+    if type(job.source_path) == "string" and not job.raw.path then
+        -- Preview borrows the active reader's original. Its owner keeps the
+        -- source alive; preview cleanup only removes the derived image.
+        job.raw.path, job.raw.borrowed = job.source_path, true
+    end
     session.raw_by_url[job.raw_key] = job.raw
     if job.raw.retain_count > 0 then job.raw.retain_count = job.raw.retain_count - 1 end
     job.raw.refs = job.raw.refs + 1
+    if job.raw.retain_count == 0 and job.cache_pinned then self:_release_retained_pin(job.raw) end
     local owner = self
     job.handle = { cancel = function()
         if job.canceled or job.dropped then return true end
@@ -614,6 +639,13 @@ function ImageLoader:cancel_processing(generation, key)
     if not job then return true end
     if not job.retention_claimed and (job.processing or job.result) then
         job.retention_claimed = true
+        -- Retaining the raw path also retains its cache protection. Otherwise
+        -- dropping the old epoch can trim preloaded originals before the new
+        -- processing jobs acquire their own pins.
+        if job.cache_pinned and not job.raw.retained_cache_identity then
+            local pinned, value = pcall(self.page_cache.pin, self.page_cache, job.cache_identity)
+            if pinned and value ~= false then job.raw.retained_cache_identity = job.cache_identity end
+        end
         job.raw.retain_count = (job.raw.retain_count or 0) + 1
         job.raw.retained = true
     end
@@ -624,6 +656,7 @@ function ImageLoader:cancel_generation(generation)
     local session = self.sessions[generation]
     if not session or session.canceled then return true end
     session.canceled = true
+    for _, raw in pairs(session.raw_by_url) do self:_release_retained_pin(raw) end
     local jobs = {}
     for _, job in pairs(session.jobs_by_key) do jobs[#jobs + 1] = job end
     for _, job in ipairs(jobs) do

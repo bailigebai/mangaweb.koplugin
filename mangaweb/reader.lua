@@ -1,6 +1,7 @@
 local Models = require("mangaweb.models")
 local PageProcessor = require("mangaweb.page_processor")
 local PageSequence = require("mangaweb.page_sequence")
+local Presets = require("mangaweb.filter_presets")
 
 local Reader = {}
 Reader.__index = Reader
@@ -10,6 +11,7 @@ local DEFAULT_SETTINGS = {
     split_min_ratio = 1.20, split_max_ratio = 2.20, split_cut_percent = 50,
     split_first_segment = "auto", gray_enabled = false, gray_preset = "original",
     tone_enabled = false, tone_preset = "original",
+    gray_custom_presets = {}, tone_custom_presets = {},
 }
 
 local function clamp(value, minimum, maximum)
@@ -17,11 +19,7 @@ local function clamp(value, minimum, maximum)
     return math.max(minimum, math.min(maximum, value))
 end
 
-local function copy(value)
-    local result = {}
-    for key, item in pairs(value or {}) do result[key] = item end
-    return result
-end
+local function copy(value) return Presets.copy(value or {}) end
 
 local function readable_pages(values)
     local pages = {}
@@ -132,13 +130,16 @@ function Reader:_show_error(value, stage)
     end
 end
 
-function Reader:_profile(page, metadata)
+function Reader:_profile(page, metadata, settings)
     if page.profile then return page.profile end
     local width = tonumber((metadata or {}).width or page.width)
     local height = tonumber((metadata or {}).height or page.height)
-    if not width or not height then return nil end
-    return PageProcessor.profile({ width = width, height = height }, self.reader_settings,
-        self.ui.content_width or 600, self.ui.content_height or 800)
+    local content_w, content_h = self.ui.content_width or 600, self.ui.content_height or 800
+    if type(self.ui.reader_viewport) == "function" then
+        content_w, content_h = self.ui:reader_viewport()
+    end
+    return PageProcessor.profile({ width = width, height = height }, settings or self.reader_settings,
+        content_w, content_h)
 end
 
 function Reader:_display(entry, wanted_segment)
@@ -223,9 +224,13 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
             or self.entries[index] ~= entry then return false end
         if self.target == index then self:_cancel_watchdog("image") end
         entry.path, entry.metadata, entry.ready = result.path, result.metadata or {}, true
+        entry.raw_path = result.cached_raw or result.path
+        if self.reprocessing_sources then self.reprocessing_sources[index] = nil end
         if self.target == index then self:_log("image", "ready", index) end
         if entry.source_metadata.width and entry.source_metadata.height then
             self.page_metadata[index] = entry.source_metadata
+        elseif entry.metadata.source_width and entry.metadata.source_height then
+            self.page_metadata[index] = { width = entry.metadata.source_width, height = entry.metadata.source_height }
         else
             self.page_metadata[index] = entry.metadata
         end
@@ -266,6 +271,7 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
             key = key, index = index, url = page.url, headers = page.headers,
             site_id = self.context.site_id, stage = "image", priority = is_prefetch and 4 or 1,
             width = entry.source_metadata.width, height = entry.source_metadata.height,
+            source_path = self.reprocessing_sources and self.reprocessing_sources[index],
             profile = self:_profile(page, entry.source_metadata),
             cache_identity = { site_id = self.context.site_id,
                 comic_id = self.context.comic_id,
@@ -328,6 +334,7 @@ function Reader:open(context)
     context.pages = readable_pages(context.pages)
     self.context, self.closed, self.entries = context, false, {}
     self.page_metadata = {}
+    self.reprocessing_sources = {}
     self.position, self.position_detail, self.current_path = nil, nil, nil
     self.target, self.target_segment = nil, nil
     if self.settings then self.reader_settings = self.settings:reader_settings() end
@@ -510,8 +517,10 @@ function Reader:update_settings(changes)
             end
         end
     end
+    self.reprocessing_sources = {}
     for entry_index, entry in pairs(self.entries) do
         local keep_raw = preserve[entry_index] == true
+        if keep_raw and entry.ready then self.reprocessing_sources[entry_index] = entry.raw_path end
         self:_cancel_entry(entry, keep_raw)
         if not keep_raw then
             if self.loader and self.loader.release then
@@ -526,6 +535,58 @@ end
 
 function Reader:settings_snapshot() return copy(self.reader_settings) end
 
+function Reader:preview_filter(kind, preset, callbacks)
+    callbacks = callbacks or {}
+    local index = self.position
+    local entry = index and self.entries[index]
+    if self.closed or not entry or not entry.raw_path or not self.loader then return nil end
+    if kind ~= "gray" and kind ~= "tone" then return nil end
+    local values = copy(self.reader_settings)
+    local candidate
+    if preset and preset.builtin then candidate = Presets.find(kind,preset.id)
+    else candidate = Presets.normalize(kind,preset) end
+    if not candidate then return nil end
+    values.gray_enabled, values.tone_enabled = kind == "gray", kind == "tone"
+    values[kind .. "_preset"] = candidate.id
+    values[kind .. "_custom_presets"] = candidate.builtin and {} or { candidate }
+    local page = self.context.pages[index]
+    local profile = self:_profile(page,self.page_metadata[index] or {},values)
+    local generation, loader_generation, canceled = self.generation, self.loader_generation, false
+    local request
+    self.preview_sequence = (self.preview_sequence or 0) + 1
+    local key = "filter-preview:" .. self.preview_sequence
+    local handle = { cancel = function()
+        if canceled then return true end
+        canceled = true
+        if request and request.cancel then pcall(request.cancel, request) end
+        if self.loader.release then pcall(self.loader.release,self.loader,loader_generation,key) end
+        return true
+    end }
+    local function ready(result)
+        if canceled or self.closed or self.generation ~= generation then return false end
+        if (result.metadata or {}).processing_error then
+            if callbacks.on_error then callbacks.on_error("image_processing_failed") end
+        elseif callbacks.on_ready then
+            callbacks.on_ready{before_path=entry.raw_path,after_path=result.path}
+        end
+        return true
+    end
+    if not profile then ready{path=entry.raw_path}; return handle end
+    local called, pending = pcall(self.loader.request, self.loader, loader_generation, {
+        key=key,index=index,url=page.url,headers=page.headers,profile=profile,
+        source_path=entry.raw_path,site_id=self.context.site_id,stage="image",priority=1,
+        cache_identity={site_id=self.context.site_id,comic_id=self.context.comic_id,
+            chapter_id=self.context.chapter_id or self.context.default_chapter_id,index=index,url=page.url},
+    }, {on_ready=ready,on_error=function(reason)
+        if not canceled and not self.closed and self.generation==generation and callbacks.on_error then
+            callbacks.on_error(reason)
+        end
+    end})
+    if called then request = pending
+    elseif callbacks.on_error then callbacks.on_error("image_processing_failed") end
+    return handle
+end
+
 function Reader:close(reason)
     if self.closed then return true end
     self.closed = true
@@ -537,6 +598,7 @@ function Reader:close(reason)
     self.entries, self.context, self.current_path, self.position = {}, nil, nil, nil
     self.resolve_pages = nil
     self.position_detail, self.target = nil, nil
+    self.reprocessing_sources = nil
     if self.ui.close_reader then self.ui:close_reader(reason)
     elseif self.ui.close then self.ui:close() end
     return true

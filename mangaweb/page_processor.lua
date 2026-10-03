@@ -1,6 +1,8 @@
 local GrayEnhance = require("mangaweb.gray_enhance")
 local PageSequence = require("mangaweb.page_sequence")
 local ToneAdjust = require("mangaweb.tone_adjust")
+local ImageDimensions = require("mangaweb.image_dimensions")
+local Presets = require("mangaweb.filter_presets")
 
 local PageProcessor = {}
 
@@ -31,13 +33,22 @@ end
 function PageProcessor.profile(image, settings, content_w, content_h)
     image, settings = image or {}, settings or {}
     if settings.gray_enabled ~= true and settings.tone_enabled ~= true then return nil end
-    local width, height = positive(image.width), positive(image.height)
-    local target_width, target_height = target_size(width, height, settings, content_w, content_h)
-    if not target_width then return nil, "invalid_image_dimensions" end
-    local gray = settings.gray_enabled and GrayEnhance.find(settings.gray_preset or "original") or nil
-    local tone = settings.tone_enabled and ToneAdjust.find(settings.tone_preset or "original") or nil
+    local gray = settings.gray_enabled and GrayEnhance.find(settings.gray_preset or "original", settings.gray_custom_presets) or nil
+    local tone = settings.tone_enabled and ToneAdjust.find(settings.tone_preset or "original", settings.tone_custom_presets) or nil
     if settings.gray_enabled and not gray then return nil, "invalid_gray_preset" end
     if settings.tone_enabled and not tone then return nil, "invalid_tone_preset" end
+    local lut = ToneAdjust.combine_lut(gray and GrayEnhance.build_lut(gray) or nil,
+        tone and ToneAdjust.build_lut(tone) or nil)
+    local changed = false
+    for input = 0, 255 do if lut and lut[input] ~= input then changed = true; break end end
+    if not changed then return nil end
+    local width, height = positive(image.width), positive(image.height)
+    if not width or not height then
+        return { id = table.concat({"pending",tostring(content_w),tostring(content_h),ToneAdjust.fingerprint(gray,tone)}, ":"),
+            settings = Presets.copy(settings), content_width = content_w, content_height = content_h }
+    end
+    local target_width, target_height = target_size(width, height, settings, content_w, content_h)
+    if not target_width then return nil, "invalid_image_dimensions" end
     local split_cut_percent = tonumber(settings.split_cut_percent) or 50
     local split = #PageSequence.segments(width, height, settings) == 2
     return {
@@ -47,9 +58,7 @@ function PageProcessor.profile(image, settings, content_w, content_h)
         }, ":"),
         target_width = target_width,
         target_height = target_height,
-        lut = ToneAdjust.combine_lut(
-            gray and GrayEnhance.build_lut(gray) or nil,
-            tone and ToneAdjust.build_lut(tone) or nil),
+        lut = lut, source_width = width, source_height = height,
         fit_mode = settings.fit_mode or "page",
         split_cut_percent = split_cut_percent,
     }
@@ -68,6 +77,23 @@ function PageProcessor.process(source_path, output_path, profile, deps)
         if ok then renderer = loaded end
     end
     if not renderer or type(renderer.renderImageFile) ~= "function" then return nil, "image_renderer_unavailable" end
+    if profile.settings then
+        -- Resolve unknown dimensions in this processing worker, never by
+        -- fully decoding the first JPEG on the UI thread.
+        local width, height = ImageDimensions.from_file(source_path)
+        if not width or not height then
+            local decoded, probe = pcall(renderer.renderImageFile, renderer, source_path, false)
+            if not decoded or not probe then return nil, "image_decode_failed" end
+            local measured, w, h = pcall(function() return probe:getWidth(), probe:getHeight() end)
+            free(probe)
+            if not measured then return nil, "invalid_image_dimensions" end
+            width, height = w,h
+        end
+        local resolved, reason = PageProcessor.profile({width=width,height=height}, profile.settings,
+            profile.content_width,profile.content_height)
+        if not resolved or not resolved.target_width then return nil, reason or "invalid_processing_profile" end
+        profile = resolved
+    end
     local decoded, buffer, decode_reason = pcall(renderer.renderImageFile, renderer,
         source_path, false, profile.target_width, profile.target_height)
     if not decoded or not buffer then return nil, decode_reason or "image_decode_failed" end
@@ -89,6 +115,7 @@ function PageProcessor.process(source_path, output_path, profile, deps)
         metadata = probe_result
         metadata.format = "png"
     end
+    metadata.source_width, metadata.source_height = profile.source_width, profile.source_height
     return metadata
 end
 

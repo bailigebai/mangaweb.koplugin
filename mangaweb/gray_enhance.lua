@@ -1,30 +1,21 @@
 local GrayEnhance = {}
+local Presets = require("mangaweb.filter_presets")
 
-GrayEnhance.presets = {
-    { id = "original", name = "原图" },
-    { id = "clear", name = "清晰", black = 40, white = 238, gamma = 1.20 },
-    { id = "strong", name = "强力", black = 55, white = 228, gamma = 1.30 },
-}
+GrayEnhance.presets = Presets.all("gray")
 
 local MAX_PIXELS = 8 * 1024 * 1024
 local MAX_WORK_BYTES = 40 * 1024 * 1024
 
-local function copy(preset)
-    local result = {}
-    for key, value in pairs(preset) do result[key] = value end
-    return result
-end
-
-function GrayEnhance.find(id)
-    for _, preset in ipairs(GrayEnhance.presets) do
-        if preset.id == id then return copy(preset) end
-    end
+function GrayEnhance.find(id, custom)
+    return Presets.find("gray", id, custom)
 end
 
 function GrayEnhance.build_lut(preset)
     if not preset or preset.id == "original" then return nil end
     local black, white, gamma = tonumber(preset.black), tonumber(preset.white), tonumber(preset.gamma)
-    if not black or not white or not gamma or black < 0 or white > 255 or black >= white or gamma <= 0 then
+    if not black or not white or not gamma or black ~= math.floor(black) or white ~= math.floor(white)
+        or black < 0 or black > 254 or white < 1 or white > 255 or black >= white
+        or gamma ~= gamma or gamma < 0.1 or gamma > 5 then
         return nil
     end
     local lut, span = {}, white - black

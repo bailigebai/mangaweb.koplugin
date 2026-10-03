@@ -2,7 +2,7 @@ local LicenseDialog = {}
 LicenseDialog.__index = LicenseDialog
 
 local TITLE = "阅读授权"
-local MESSAGE = "咸鱼搜 koreader推箱子 找到购买。"
+local MESSAGE = "插件售价：30元。\n咸鱼搜 koreader推箱子 找到购买。"
 
 function LicenseDialog:new(options)
     options = options or {}

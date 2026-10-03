@@ -1,27 +1,17 @@
 local ToneAdjust = {}
+local Presets = require("mangaweb.filter_presets")
 
-ToneAdjust.presets = {
-    { id = "original", name = "原图", brightness = 0, contrast = 100 },
-    { id = "bright", name = "提亮", brightness = 10, contrast = 100 },
-    { id = "contrast", name = "高对比", brightness = 0, contrast = 120 },
-}
+ToneAdjust.presets = Presets.all("tone")
 
-local function copy(preset)
-    local result = {}
-    for key, value in pairs(preset) do result[key] = value end
-    return result
-end
-
-function ToneAdjust.find(id)
-    for _, preset in ipairs(ToneAdjust.presets) do
-        if preset.id == id then return copy(preset) end
-    end
+function ToneAdjust.find(id, custom)
+    return Presets.find("tone", id, custom)
 end
 
 function ToneAdjust.build_lut(preset)
     preset = preset or ToneAdjust.find("original")
     local brightness, contrast = tonumber(preset.brightness), tonumber(preset.contrast)
-    if not brightness or not contrast or brightness < -100 or brightness > 100
+    if not brightness or not contrast or brightness ~= math.floor(brightness) or contrast ~= math.floor(contrast)
+        or brightness < -100 or brightness > 100
         or contrast < 0 or contrast > 200 then return nil end
     local lut, offset, factor = {}, brightness * 255 / 100, contrast / 100
     for input = 0, 255 do

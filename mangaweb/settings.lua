@@ -1,5 +1,6 @@
 local Settings = {}
 Settings.__index = Settings
+local Presets = require("mangaweb.filter_presets")
 
 local READER_DEFAULTS = {
     preload_pages = 3, direction = "ltr", fit_mode = "page",
@@ -7,6 +8,7 @@ local READER_DEFAULTS = {
     split_cut_percent = 50, split_first_segment = "auto",
     gray_enabled = false, gray_preset = "original",
     tone_enabled = false, tone_preset = "original",
+    gray_custom_presets = {}, tone_custom_presets = {},
     cache_upper_mb = 256, cache_lower_mb = 192,
 }
 
@@ -40,11 +42,13 @@ local function invalid_reader_field(values)
         return "invalid_split_first_segment"
     end
     if type(values.gray_enabled) ~= "boolean" then return "invalid_gray_enabled" end
-    if not one_of(values.gray_preset, { original = true, clear = true, strong = true }) then
+    if not Presets.valid_list("gray", values.gray_custom_presets) then return "invalid_gray_preset" end
+    if not Presets.find("gray", values.gray_preset, values.gray_custom_presets) then
         return "invalid_gray_preset"
     end
     if type(values.tone_enabled) ~= "boolean" then return "invalid_tone_enabled" end
-    if not one_of(values.tone_preset, { original = true, bright = true, contrast = true }) then
+    if not Presets.valid_list("tone", values.tone_custom_presets) then return "invalid_tone_preset" end
+    if not Presets.find("tone", values.tone_preset, values.tone_custom_presets) then
         return "invalid_tone_preset"
     end
     if not is_integer(values.cache_upper_mb) or values.cache_upper_mb < 64
@@ -58,20 +62,27 @@ local function normalize_reader(values, strict)
         local reason = invalid_reader_field(values)
         if reason then return nil, reason end
     end
-    local normalized = {}
+    local normalized = {
+        gray_custom_presets = Presets.sanitize("gray", type(values) == "table" and values.gray_custom_presets),
+        tone_custom_presets = Presets.sanitize("tone", type(values) == "table" and values.tone_custom_presets),
+    }
     for key, default in pairs(READER_DEFAULTS) do
-        local candidate = type(values) == "table" and values[key]
-        local probe = {}
-        for field, fallback in pairs(READER_DEFAULTS) do
-            if field == key then probe[field] = candidate else probe[field] = fallback end
+        if key ~= "gray_custom_presets" and key ~= "tone_custom_presets" then
+            local candidate = type(values) == "table" and values[key]
+            local probe = {}
+            for field, fallback in pairs(READER_DEFAULTS) do
+                if field == key then probe[field] = candidate else probe[field] = fallback end
+            end
+            probe.gray_custom_presets = normalized.gray_custom_presets
+            probe.tone_custom_presets = normalized.tone_custom_presets
+            local invalid = invalid_reader_field(probe)
+            if key == "cache_upper_mb" then
+                invalid = not is_integer(candidate) or candidate < 64 or candidate > 2048
+            elseif key == "cache_lower_mb" then
+                invalid = not is_integer(candidate) or candidate < 0 or candidate >= 2048
+            end
+            normalized[key] = invalid and default or candidate
         end
-        local invalid = invalid_reader_field(probe)
-        if key == "cache_upper_mb" then
-            invalid = not is_integer(candidate) or candidate < 64 or candidate > 2048
-        elseif key == "cache_lower_mb" then
-            invalid = not is_integer(candidate) or candidate < 0 or candidate >= 2048
-        end
-        normalized[key] = invalid and default or candidate
     end
     if normalized.split_min_ratio > normalized.split_max_ratio then
         normalized.split_min_ratio = READER_DEFAULTS.split_min_ratio

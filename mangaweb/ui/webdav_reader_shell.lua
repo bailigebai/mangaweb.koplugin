@@ -112,6 +112,7 @@ function NativeReader:show(model)
             if widget and type(widget.free) == "function" then pcall(widget.free, widget) end
         end
         self.title_bar, self.top_controls, self.progress = nil, nil, nil
+        self.processing_notice = nil
         self.back_button, self.page_button, self.settings_button = nil, nil, nil
         self.previous_button, self.next_button = nil, nil
         self.retry_button, self.exit_button, self.error_text, self.error_overlay = nil, nil, nil, nil
@@ -139,6 +140,16 @@ function NativeReader:show(model)
                 margin_h = 0, margin_v = 0, radius = 0, allow_mirroring = false,
             })
             if self.progress then controls[#controls + 1] = self.progress end
+            if self.processing_error and dependencies.text_widget and dependencies.font then
+                local label = new_widget(dependencies.text_widget, {
+                    text = "增强处理失败，已显示原图", face = dependencies.font:getFace("cfont",18),
+                })
+                self.processing_notice = label and new_widget(dependencies.frame_container, {
+                    margin=0,padding=2,bordersize=0,
+                    background=dependencies.blitbuffer and dependencies.blitbuffer.COLOR_WHITE,label,
+                })
+                if self.processing_notice then controls[#controls+1] = self.processing_notice end
+            end
             self.control_widgets = controls
             return controls
         end
@@ -240,7 +251,10 @@ function NativeReader:show(model)
         self:_dispose_embedded_controls()
         self:_release_controls()
         self.embedded_controls = panel
-        self.ges_events = nil
+        -- InputContainer still receives unhandled gestures while the panel is
+        -- open and iterates this table. Disable page gestures without breaking
+        -- the native input contract; close_controls restores page_gestures.
+        self.ges_events = {}
         self[1] = panel
         self:_dirty()
         return true
@@ -331,6 +345,7 @@ function NativeReader:show(model)
         self.loading = false
         self.download_bytes, self.download_total = nil, nil
         self.segment, self.pan_y, self.fit_mode = options.segment, options.pan_y, options.fit_mode
+        self.processing_error = options.processing_error
         self.split_cut_percent = options.split_cut_percent
         self:_rebuild_surface()
         self:_dirty()
@@ -463,6 +478,7 @@ function NativeReader:show(model)
         direction = model.direction == "rtl" and "rtl" or "ltr",
         segment = model.segment, pan_y = model.pan_y, fit_mode = model.fit_mode,
         split_cut_percent = model.split_cut_percent,
+        processing_error = model.processing_error,
         actions = model.actions or {},
         width = width,
         height = height,

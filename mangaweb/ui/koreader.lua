@@ -5,6 +5,7 @@ local ReaderShell = require("mangaweb.ui.webdav_reader_shell")
 local NativeRoot = require("mangaweb.ui.native_root")
 local Models = require("mangaweb.models")
 local SiteRuleEditor = require("mangaweb.ui.site_rule_editor")
+local ReaderFilters = require("mangaweb.ui.reader_filters")
 
 local Adapter = {}
 Adapter.__index = Adapter
@@ -259,7 +260,7 @@ function Adapter:show_license_manager(model)
     model = model or {}
     self:close_license_overlay()
     local adapter = self
-    local function render(confirming)
+    local function render(confirming, error_text)
         if self.license_manager_widget and self.ui_manager and self.ui_manager.close then
             pcall(self.ui_manager.close, self.ui_manager, self.license_manager_widget)
         end
@@ -267,6 +268,7 @@ function Adapter:show_license_manager(model)
             status = model.status,
             status_text = self:_license_manager_status(model.status),
             confirming_remove = confirming == true,
+            error = error_text,
             actions = {},
         }
         self.license_manager_model = state
@@ -277,21 +279,30 @@ function Adapter:show_license_manager(model)
         end
         state.actions.activate = function() return call_action(model.on_activate) end
         state.actions.remove = function() return render(true) end
-        state.actions.confirm_remove = function() return call_action(model.on_remove) end
+        state.actions.confirm_remove = function()
+            if adapter.license_manager_model ~= state then return true end
+            local called, removed = pcall(model.on_remove)
+            if not called or removed ~= true then
+                return render(true, "移除本机授权失败，请重试。")
+            end
+            return true
+        end
         state.actions.cancel_remove = function() return render(false) end
 
         local panel_model = {
             page = "license_manager",
-            title = "阅读授权",
-            status = confirming and "确认只移除本机激活？" or state.status_text,
-            rows = {{ kind = "info", text = "咸鱼搜 koreader推箱子 找到购买。" }},
+            modal = true,
+            title = "授权密钥管理",
+            status = error_text or (confirming
+                and "确认移除本机授权？此操作不会解绑服务器上的密钥。" or state.status_text),
+            rows = {{ kind = "info", text = tostring(model.message or "") }},
             actions = confirming and {
                 { text = "取消", callback = state.actions.cancel_remove },
                 { text = "确认移除", callback = state.actions.confirm_remove },
             } or {
-                { text = model.status == "authorized" and "重新激活" or "输入短密钥",
+                { text = model.status == "authorized" and "输入/更换密钥" or "输入短密钥",
                     callback = state.actions.activate },
-                { text = "移除本地激活（开发测试）", callback = state.actions.remove },
+                { text = "移除本机授权", callback = state.actions.remove },
                 { text = "返回", callback = close_manager },
             },
             on_back = close_manager,
@@ -309,11 +320,22 @@ function Adapter:show_license_manager(model)
         }
         local widget = renderer:show(panel_model)
         if not widget and self.menu then
-            local items = {{ text = panel_model.status, enabled = false }}
+            local items = {{ text = panel_model.status, enabled = false, select_enabled = false }}
+            if model.message and model.message ~= "" then
+                items[#items + 1] = { text = model.message, enabled = false, select_enabled = false }
+            end
             for _, item in ipairs(panel_model.actions) do items[#items + 1] = item end
             widget = self.menu:new{
                 title = panel_model.title, item_table = items,
+                modal = true,
                 covers_fullscreen = true, close_callback = close_manager,
+                -- These actions manage their own windows. Native Menu would
+                -- otherwise close a newly opened input/confirmation window
+                -- through the previous menu's close_callback after selection.
+                onMenuSelect = function(_, selected)
+                    if selected.select_enabled ~= false then call_action(selected.callback) end
+                    return true
+                end,
             }
             renderer = nil
         end
@@ -1752,27 +1774,83 @@ local function tap_region(region, x, width)
     return "center"
 end
 
+function Adapter:_close_reader_controls()
+    local manager = self.ui_manager
+    local current = self.reader_controls
+    self.reader_controls = nil
+    if current and self.reader_widget
+        and current == self.reader_widget.embedded_controls then
+        self.reader_widget:close_controls()
+    elseif current and manager and manager.close then
+        pcall(manager.close, manager, current)
+    end
+    return true
+end
+
+function Adapter:_show_reader_panel(model)
+    local manager = self.ui_manager
+    if not manager then return false end
+    if self.reader_renderer and type(self.reader_renderer.show_controls) == "function"
+        and self.reader_renderer:show_controls(model) then
+        self.reader_controls = self.reader_widget.embedded_controls
+        return true
+    end
+    local renderer = NativePanel:new{
+        device = self.device, input_container = self.input_container,
+        button = self.button, frame_container = self.frame_container,
+        horizontal_group = self.horizontal_group, vertical_group = self.vertical_group,
+        title_bar = self.title_bar, scrollable_container = self.scrollable_container,
+        text_box_widget = self.text_box_widget, font = self.font,
+        rect_span = self.rect_span, geom = self.geom, screen = self.screen,
+        blitbuffer = self.blitbuffer, ui_manager = manager,
+    }
+    local controls = renderer:show(model)
+    if not controls and self.menu then
+        local fallback_items = {}
+        if model.status then fallback_items[#fallback_items+1] = {text=model.status,select_enabled=false} end
+        for _, row in ipairs(model.rows or {}) do
+            if row.kind == "info" then
+                fallback_items[#fallback_items+1] = {text=row.text,select_enabled=false}
+            end
+            for _, value in ipairs(row.items or {}) do
+                fallback_items[#fallback_items + 1] = value
+            end
+        end
+        for _, value in ipairs(model.actions or {}) do fallback_items[#fallback_items + 1] = value end
+        for _, value in ipairs(model.navigation or {}) do fallback_items[#fallback_items + 1] = value end
+        controls = self.menu:new{
+            title = model.title, item_table = fallback_items, modal = true,
+            covers_fullscreen = false, close_callback = model.on_back or model.on_close,
+            onMenuSelect = function(_, selected)
+                if selected.select_enabled ~= false then call_action(selected.callback) end
+                return true
+            end,
+        }
+    end
+    if not controls then return false end
+    self:_close_reader_controls()
+    self.reader_controls = controls
+    manager:show(controls)
+    return true
+end
+
 function Adapter:_show_reader_controls(section)
     local manager, reader = self.ui_manager, self.reader
     if not manager or not reader then return false end
     section = section or "root"
+    if section == "gray" or section == "tone" then
+        if not self.reader_filters or self.reader_filters.reader ~= reader then
+            self.reader_filters = ReaderFilters:new{adapter=self,reader=reader}
+        end
+        return self.reader_filters:show(section)
+    end
     local snapshot = type(reader.settings_snapshot) == "function"
         and reader:settings_snapshot() or {}
     local function setting(name, fallback)
         local value = snapshot[name]
         return value == nil and fallback or value
     end
-    local function close_controls()
-        local current = self.reader_controls
-        self.reader_controls = nil
-        if current and self.reader_widget
-            and current == self.reader_widget.embedded_controls then
-            self.reader_widget:close_controls()
-        elseif current and manager.close then
-            pcall(manager.close, manager, current)
-        end
-        return true
-    end
+    local function close_controls() return self:_close_reader_controls() end
     local function show_section(name)
         if not (self.reader_widget and self.reader_widget.embedded_controls) then
             close_controls()
@@ -1797,12 +1875,6 @@ function Adapter:_show_reader_controls(section)
         end
         return show_section(section)
     end
-    local function cycle(value, values)
-        for index, candidate in ipairs(values) do
-            if candidate == value then return values[index % #values + 1] end
-        end
-        return values[1]
-    end
     local function item(text, callback) return { text = text, callback = callback } end
     local function rows_from(items)
         local rows = {}
@@ -1823,6 +1895,25 @@ function Adapter:_show_reader_controls(section)
             return self.shell:show("browse")
         end
         return true
+    end
+    local license_dialog = self.shell and self.shell.license_dialog
+    local function manage_license()
+        if self.reader ~= reader or reader.closed then return false end
+        if not license_dialog or type(license_dialog.show_manager) ~= "function" then
+            return false
+        end
+        return license_dialog:show_manager(function()
+            if self.reader ~= reader or reader.closed then return end
+            local license = license_dialog.license
+            local checked, authorized = false, false
+            if license and type(license.is_authorized) == "function" then
+                checked, authorized = pcall(license.is_authorized, license)
+            end
+            if not checked or authorized ~= true then
+                close_controls()
+                reader:close("back")
+            end
+        end)
     end
     local title, items
     if section == "reading" then
@@ -1860,32 +1951,6 @@ function Adapter:_show_reader_controls(section)
                 return update{ split_cut_percent = cut >= 90 and 10 or cut + 10 }
             end),
         }
-    elseif section == "gray" then
-        title = "漫画去灰增强"
-        local enabled = setting("gray_enabled", false)
-        local preset = setting("gray_preset", "original")
-        items = {
-            item("去灰增强：" .. (enabled and "开" or "关"), function()
-                return update{ gray_enabled = not enabled }
-            end),
-            item("预设：" .. tostring(preset), function()
-                local next_preset = cycle(preset, { "original", "clear", "strong" })
-                return update{ gray_preset = next_preset }
-            end),
-        }
-    elseif section == "tone" then
-        title = "亮度与对比度"
-        local enabled = setting("tone_enabled", false)
-        local preset = setting("tone_preset", "original")
-        items = {
-            item("亮度/对比度：" .. (enabled and "开" or "关"), function()
-                return update{ tone_enabled = not enabled }
-            end),
-            item("预设：" .. tostring(preset), function()
-                return update{ tone_preset = cycle(preset,
-                    { "original", "bright", "contrast" }) }
-            end),
-        }
     elseif section == "cache" then
         title = "图片缓存"
         local upper = tonumber(setting("cache_upper_mb", 256)) or 256
@@ -1919,6 +1984,9 @@ function Adapter:_show_reader_controls(section)
             item("图片缓存", function() return show_section("cache") end),
             item("继续阅读", close_controls),
         }
+        if license_dialog and type(license_dialog.show_manager) == "function" then
+            table.insert(items, #items, item("授权密钥管理", manage_license))
+        end
     end
     local navigation = {
         item(section == "root" and "跳转图片" or "← 返回设置", function()
@@ -1936,39 +2004,7 @@ function Adapter:_show_reader_controls(section)
             or function() return show_section("root") end,
         on_close = close_controls,
     }
-    if self.reader_renderer and type(self.reader_renderer.show_controls) == "function"
-        and self.reader_renderer:show_controls(model) then
-        self.reader_controls = self.reader_widget.embedded_controls
-        return true
-    end
-    local renderer = NativePanel:new{
-        device = self.device, input_container = self.input_container,
-        button = self.button, frame_container = self.frame_container,
-        horizontal_group = self.horizontal_group, vertical_group = self.vertical_group,
-        title_bar = self.title_bar, scrollable_container = self.scrollable_container,
-        text_box_widget = self.text_box_widget, font = self.font,
-        rect_span = self.rect_span, geom = self.geom, screen = self.screen,
-        blitbuffer = self.blitbuffer, ui_manager = manager,
-    }
-    local controls = renderer:show(model)
-    if not controls and self.menu then
-        local fallback_items = {}
-        for _, row in ipairs(model.rows) do
-            for _, value in ipairs(row.items or {}) do
-                fallback_items[#fallback_items + 1] = value
-            end
-        end
-        for _, value in ipairs(navigation) do fallback_items[#fallback_items + 1] = value end
-        controls = self.menu:new{
-            title = title, item_table = fallback_items, modal = true,
-            covers_fullscreen = false,
-        }
-    end
-    if not controls then return false end
-    close_controls()
-    self.reader_controls = controls
-    manager:show(controls)
-    return true
+    return self:_show_reader_panel(model)
 end
 
 function Adapter:_turn_from_edge(edge)
@@ -2146,6 +2182,12 @@ function Adapter:show_download_progress(bytes, total)
     return updated
 end
 
+function Adapter:reader_viewport()
+    if self.reader_widget then return self.reader_widget.width, self.reader_widget.height end
+    local screen = self.screen
+    return screen:getWidth(), screen:getHeight()
+end
+
 function Adapter:show_page(path, index, total, options)
     options = options or {}
     self.reader_loading = nil
@@ -2165,6 +2207,7 @@ function Adapter:show_page(path, index, total, options)
         direction = options.direction or (self.reading_rtl and "rtl" or "ltr"),
         segment = options.segment, pan_y = options.pan_y, fit_mode = options.fit_mode,
         split_cut_percent = options.split_cut_percent,
+        processing_error = options.processing_error,
         actions = self:_reader_actions(),
     }
     if not page then return false end
@@ -2179,6 +2222,7 @@ function Adapter:show_page(path, index, total, options)
 end
 
 function Adapter:close_reader(reason)
+    if self.reader_filters then self.reader_filters:close(); self.reader_filters=nil end
     local manager = self.ui_manager
     if manager and manager.close then
         if self.error_widget then manager:close(self.error_widget) end
