@@ -16,11 +16,11 @@ end
 
 PageCache.image_kind = image_kind
 
-local function runtime_root()
+local function runtime_root(directory)
     local source = debug.getinfo(1, "S").source
     local plugin = type(source) == "string" and source:sub(1, 1) == "@"
         and source:sub(2):match("^(.*)[/\\]mangaweb[/\\]page_cache%.lua$")
-    return plugin and (plugin:gsub("\\", "/") .. "/cache/pages") or nil
+    return plugin and (plugin:gsub("\\", "/") .. "/cache/" .. directory) or nil
 end
 
 local function default_fs()
@@ -80,7 +80,8 @@ end
 
 function PageCache:new(options)
     options = options or {}
-    local root = options.root or runtime_root()
+    local directory = ({ covers = true, catalogues = true })[options.directory] and options.directory or "pages"
+    local root = options.root or runtime_root(directory)
     if type(root) ~= "string" or root == "" then return nil end
     root = root:gsub("\\", "/"):gsub("/+$", "")
     local fs = options.fs or default_fs()
@@ -127,19 +128,58 @@ function PageCache:_name(identity, extension)
 end
 
 function PageCache:_ensure_dir()
-    local parent = self.root:match("^(.*)/pages$")
+    local parent = self.root:match("^(.*)/pages$") or self.root:match("^(.*)/covers$")
+        or self.root:match("^(.*)/catalogues$")
     if not parent then return false end
     local ok1, made1 = pcall(self.fs.mkdir, self.fs, parent)
     local ok2, made2 = pcall(self.fs.mkdir, self.fs, self.root)
     return ok1 and made1 == true and ok2 and made2 == true
 end
 
+local function marker(name)
+    if type(name) ~= "string" then return end
+    local owner, prefix, index, hash = name:match("^([0-9a-f]+)%.([0-9a-f]+)_([0-9]+)_([0-9a-f]+)%.keep$")
+    if owner and #owner == 64 and #prefix == 16 and #index == 8 and #hash == 64 then
+        return owner, prefix .. "_" .. index .. "_" .. hash
+    end
+end
+
+function PageCache:sync_protected(owner, identities, replace)
+    local scope = digest(self.sha256, owner)
+    if not scope or not self:_ensure_dir() then return false end
+    local ok, entries = pcall(self.fs.list, self.fs, self.root)
+    if not ok or type(entries) ~= "table" then return false end
+    local existing, wanted = {}, {}
+    for _, entry in ipairs(entries) do
+        local group, stem = marker(entry.name)
+        if entry.mode == "file" and group == scope then existing[stem] = entry.name end
+    end
+    for _, identity in ipairs(identities or {}) do
+        local stem = self:_name(identity)
+        if not stem then return false end
+        wanted[stem] = true
+        if not existing[stem] then
+            local wrote, success = pcall(self.fs.write, self.fs, self.root .. "/" .. scope .. "." .. stem .. ".keep", "")
+            if not wrote or success ~= true then return false end
+        end
+    end
+    if replace then
+        for stem, name in pairs(existing) do
+            if not wanted[stem] then pcall(self.fs.remove, self.fs, self.root .. "/" .. name) end
+        end
+    end
+    self:trim()
+    return true
+end
+
 function PageCache:_entries()
     local ok, entries = pcall(self.fs.list, self.fs, self.root)
     if not ok or type(entries) ~= "table" then return {} end
-    local valid = {}
+    local valid, protected = {}, {}
     for _, entry in ipairs(entries) do
         local name = type(entry) == "table" and entry.name
+        local _, stem = marker(name)
+        if entry.mode == "file" and stem then protected[stem] = true end
         local prefix, number, hash, extension
         if type(name) == "string" then
             prefix, number, hash, extension =
@@ -152,7 +192,7 @@ function PageCache:_entries()
                 size = tonumber(entry.size) or 0, mtime = tonumber(entry.mtime) or 0 }
         end
     end
-    return valid
+    return valid, protected
 end
 
 function PageCache:size_bytes()
@@ -205,7 +245,9 @@ function PageCache:unpin(identity)
     if not stem then return false end
     local count = self.pins[stem] or 0
     if count <= 1 then self.pins[stem] = nil else self.pins[stem] = count - 1 end
-    self:trim()
+    -- Writes/configuration already measure usage. Releasing an ordinary cached
+    -- thumbnail must not rescan every file and every protection marker.
+    if self.needs_trim then self:trim() end
     return true
 end
 
@@ -237,6 +279,14 @@ function PageCache:put(identity, body, extension)
     end
     self:trim()
     return path
+end
+
+function PageCache:put_file(identity, source, limit)
+    limit = tonumber(limit) or MAX_IMAGE_BYTES
+    if limit < 12 or limit > MAX_IMAGE_BYTES then return nil end
+    local ok, body = pcall(self.fs.read, self.fs, source, limit + 1)
+    if not ok or type(body) ~= "string" or #body > limit then return nil end
+    return self:put(identity, body)
 end
 
 function PageCache:reserve(identity)
@@ -300,7 +350,9 @@ function PageCache:publish(identity, part_path, reported_bytes)
 end
 
 function PageCache:trim()
-    local entries, total = self:_entries(), 0
+    local entries, protected = self:_entries()
+    protected = protected or {}
+    local total = 0
     for _, entry in ipairs(entries) do total = total + entry.size end
     if total <= self.upper_bytes and not self.needs_trim then return true end
     local current = self.current
@@ -323,7 +375,7 @@ function PageCache:trim()
         local stem = entry.name:match("^(.*)%.[^.]+$")
         local is_current = current and entry.prefix == current.prefix
             and entry.index == current.index
-        if not self.pins[stem] and not is_current then
+        if not self.pins[stem] and not protected[stem] and not is_current then
             local removed, value = pcall(self.fs.remove, self.fs, entry.path)
             if removed and value == true then total = total - entry.size end
         end

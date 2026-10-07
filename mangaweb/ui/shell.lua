@@ -7,6 +7,7 @@ local Settings = require("mangaweb.ui.settings")
 local SiteCenter = require("mangaweb.ui.site_center")
 local CategoryShelf = require("mangaweb.ui.category_shelf")
 local Models = require("mangaweb.models")
+local DetailCache = require("mangaweb.detail_cache")
 
 local Shell = {}
 Shell.__index = Shell
@@ -19,6 +20,8 @@ function Shell:new(options)
         store = options.store,
         auth = options.auth,
         http = options.http,
+        catalogue_cache = options.catalogue_cache,
+        detail_cache = options.detail_cache or DetailCache:new{ keyer = options.catalogue_cache },
         reader = options.reader,
         license = options.license,
         license_dialog = options.license_dialog,
@@ -46,6 +49,8 @@ function Shell:_next_view()
     self.detail = nil
     if self.browse and type(self.browse.close) == "function" then self.browse:close() end
     self.browse = nil
+    if self.library and type(self.library.close) == "function" then self.library:close() end
+    self.library = nil
     if self.settings_page and type(self.settings_page.close) == "function" then
         self.settings_page:close()
     end
@@ -102,7 +107,7 @@ function Shell:show(page, options)
     end
     if page == "library" then
         self.library = Library:new{ source_registry = self.registry, store = self.store, shell = self,
-            view_token = token, category_id = options.category_id }
+            view_token = token, category_id = options.category_id, official_page = options.official_page }
         return self.library:show()
     end
     if page == "history" then
@@ -224,6 +229,7 @@ function Shell:close()
     if self.closed then return true end
     self:_next_view()
     self.closed = true
+    if self.detail_cache then self.detail_cache:clear() end
     if self.on_close then return self.on_close() end
     if self.ui and self.ui.close_fullscreen then self.ui:close_fullscreen(self) end
     return true

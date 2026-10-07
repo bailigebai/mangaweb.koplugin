@@ -17,6 +17,7 @@ local ERROR_MESSAGES = {
     image_error = "图片加载失败，请重试",
     render_error = "界面显示失败，请返回重试",
     request_timeout = "章节请求超时，请重试",
+    favorite_remove_uncertain = "无法确认网页收藏是否已取消，请刷新官方收藏核对；不会自动重复取消",
 }
 
 function M.error(raw, site_id, stage, fallback)
@@ -30,6 +31,8 @@ function M.error(raw, site_id, stage, fallback)
     local message = ERROR_MESSAGES[code] or "请求失败，请重试"
     if code == "request_timeout" and (safe_stage == "image" or safe_stage == "page") then
         message = "图片加载超时，请重试"
+    elseif code == "request_timeout" and (safe_stage == "favorites" or safe_stage == "favorite_remove") then
+        message = "收藏请求超时，请刷新后重试"
     elseif code == "response_too_large" and (safe_stage == "image" or safe_stage == "page") then
         message = "图片超过 64 MiB，已停止下载"
     elseif code == "http_unavailable" and (safe_stage == "image" or safe_stage == "page") then

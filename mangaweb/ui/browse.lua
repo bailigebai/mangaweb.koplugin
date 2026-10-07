@@ -11,6 +11,7 @@ function Browse:new(options)
         shell = assert(options.shell, "shell is required"),
         cover_grid = options.cover_grid or CoverGrid:new{},
         store = options.store,
+        catalogue_cache = options.catalogue_cache or options.shell.catalogue_cache,
         view_token = options.view_token,
         request_token = 0,
         current_page = nil,
@@ -208,6 +209,35 @@ function Browse:apply_channel(channel_id)
     return self:load(options)
 end
 
+function Browse:_publish_result(result, request, request_token, extra)
+    if not self:_is_current(request_token) then return false end
+    local cards = {}
+    for _, card in ipairs(result.cards or result) do
+        local value = models.card(card)
+        if self.source.image_headers and value.cover_url then
+            local ok, headers = pcall(self.source.image_headers, self.source, value.cover_url)
+            if ok then value.cover_headers = headers end
+        end
+        if self.store and type(self.store.is_favorite) == "function" then
+            value.favorite = self.store:is_favorite(value.site_id, value.comic_id)
+        end
+        local history = self.store and type(self.store.get_history) == "function"
+            and self.store:get_history(value.site_id, value.comic_id) or nil
+        if history then value.progress = tostring(history.page_index or 1) .. "/" .. tostring(history.total_pages or 1) end
+        cards[#cards + 1] = value
+    end
+    local model = { page = "browse", grid = self.cover_grid:build(cards, {
+        on_card = function(card) return self:open_card(card) end,
+        on_tag = function(tag) return self:apply_tag(tag) end,
+    }), actions = self:_actions(),
+        filters = { query = request.query, category = request.category, tag = request.tag },
+        state = #cards == 0 and "empty" or "ready", page_number = tonumber(result.page) or request.page,
+        total_pages = tonumber(result.total_pages) or 1 }
+    for key, value in pairs(extra or {}) do model[key] = value end
+    self.current_page = model.page_number
+    return self:_publish(model, request_token), cards
+end
+
 function Browse:load(options)
     options = options or {}
     local request_token = self:_next_request()
@@ -221,47 +251,47 @@ function Browse:load(options)
     end
     local request = self:_options(options)
     self.current_page = request.page
-    if not self:_publish({
-        page = "browse",
-        grid = self.cover_grid:build({}, {}),
-        actions = self:_actions(),
-        filters = { query = request.query, category = request.category, tag = request.tag },
-        state = "loading",
-        page_number = request.page,
-        total_pages = 1,
-    }, request_token) then return false end
+    local cache, key, snapshot = self.catalogue_cache
+    if cache then
+        local ok, value = pcall(cache.key, cache, source, request, "browse")
+        if ok then key = value end
+        if key then local got, value = pcall(cache.get, cache, key); if got then snapshot = value end end
+    end
+    local published
+    if snapshot then
+        published = self:_publish_result(snapshot, request, request_token, { refreshing = true, cached = true })
+    else
+        published = self:_publish({
+            page = "browse",
+            grid = self.cover_grid:build({}, {}),
+            actions = self:_actions(),
+            filters = { query = request.query, category = request.category, tag = request.tag },
+            state = "loading",
+            page_number = request.page,
+            total_pages = 1,
+        }, request_token)
+    end
+    if not published then return false end
     self:_load_primary_categories()
     local handle = source:list(request, {
         on_success = function(result)
-            local cards = {}
-            for _, card in ipairs(result.cards or result) do
-                local value = models.card(card)
-                if self.store and type(self.store.is_favorite) == "function" then
-                    value.favorite = self.store:is_favorite(value.site_id, value.comic_id)
-                end
-                local history = self.store and type(self.store.get_history) == "function"
-                    and self.store:get_history(value.site_id, value.comic_id) or nil
-                if history then
-                    value.progress = tostring(history.page_index or 1) .. "/"
-                        .. tostring(history.total_pages or 1)
-                end
-                cards[#cards + 1] = value
+            if not self:_is_current(request_token) then return false end
+            local _, cards = self:_publish_result(result, request, request_token)
+            if self:_is_current(request_token) and cache then
+                -- Sources can merge Set-Cookie before this callback. Persist in the
+                -- current session namespace so the next visit can find the snapshot.
+                local ok, current_key = pcall(cache.key, cache, source, request, "browse")
+                if ok and current_key then pcall(cache.put, cache, current_key, {cards=cards,
+                    page=tonumber(result.page) or request.page,total_pages=tonumber(result.total_pages) or 1}) end
             end
-            self:_publish({
-                page = "browse",
-                grid = self.cover_grid:build(cards, {
-                    on_card = function(card) return self:open_card(card) end,
-                    on_tag = function(tag) return self:apply_tag(tag) end,
-                }),
-                actions = self:_actions(),
-                filters = { query = request.query, category = request.category, tag = request.tag },
-                state = #cards == 0 and "empty" or "ready",
-                page_number = tonumber(result.page) or request.page,
-                total_pages = tonumber(result.total_pages) or 1,
-            }, request_token)
-            self.current_page = tonumber(result.page) or request.page
         end,
         on_error = function(error)
+            if not self:_is_current(request_token) then return false end
+            if snapshot and (error or {}).code ~= "login_required" then
+                return self:_publish_result(snapshot, request, request_token,
+                    { cached = true, refresh_error = error })
+            end
+            if cache and key and (error or {}).code == "login_required" then pcall(cache.invalidate, cache, key) end
             self:_publish({ page = "browse", grid = self.cover_grid:build({}, {}),
                 state = error and error.code or "network_error", error = error,
             actions = self:_actions() }, request_token)

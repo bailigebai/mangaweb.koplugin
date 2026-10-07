@@ -6,6 +6,7 @@ local NativeRoot = require("mangaweb.ui.native_root")
 local Models = require("mangaweb.models")
 local SiteRuleEditor = require("mangaweb.ui.site_rule_editor")
 local ReaderFilters = require("mangaweb.ui.reader_filters")
+local CoverPrefetch = require("mangaweb.cover_prefetch")
 
 local Adapter = {}
 Adapter.__index = Adapter
@@ -100,6 +101,7 @@ function Adapter:new(options)
         shell = nil,
         reader = nil,
         loader = options.loader,
+        cover_loader = options.cover_loader,
         reading_rtl = false,
         progress_clock = options.progress_clock or os.time,
         device = optional(options.device, "device"),
@@ -426,11 +428,13 @@ function Adapter:defer(callback)
 end
 
 function Adapter:_cancel_covers()
-    if self.loader and self.cover_loader_generation
-        and type(self.loader.cancel_generation) == "function" then
-        pcall(self.loader.cancel_generation, self.loader, self.cover_loader_generation)
+    local loader = self.cover_loader or self.loader
+    if loader and self.cover_loader_generation
+        and type(loader.cancel_generation) == "function" then
+        pcall(loader.cancel_generation, loader, self.cover_loader_generation)
     end
     self.cover_loader_generation = nil
+    self.cover_prefetch = nil
     for _, handle in ipairs(self.cover_handles or {}) do
         if handle and handle.cancel then pcall(handle.cancel, handle) end
     end
@@ -443,7 +447,11 @@ function Adapter:_cancel_covers()
     self.detail_image_identity = nil
     self.detail_image_requests = nil
     self.detail_image_targets = nil
+    self.detail_image_jobs = nil
     self.detail_image_order = nil
+    self.cover_grid = nil
+    self.cover_grid_identity = nil
+    self.cover_grid_requests = nil
 end
 
 function Adapter:_build_grid(model, existing)
@@ -549,7 +557,7 @@ end
 
 function Adapter:_build_collection_grid(model, existing)
     local labels = {
-        library = { title = "本地收藏", active = "library" },
+        library = { title = "收藏", active = "library" },
         history = { title = "阅读历史", active = "history" },
         category_items = { title = ((model.category or {}).name or "分类架"), active = "library" },
     }
@@ -565,7 +573,7 @@ function Adapter:_build_collection_grid(model, existing)
             index = index, site_id = item.site_id, comic_id = item.comic_id,
             title = item.title, cover_url = item.cover_url,
             cover_headers = item.cover_headers, tags = item.tags or {},
-            favorite = model.page ~= "history", progress = progress,
+            progress = progress,
             selected = item.selected,
             on_tap = item.on_tap or function()
                 return self.shell and self.shell:show_detail(item)
@@ -574,14 +582,16 @@ function Adapter:_build_collection_grid(model, existing)
     end
     model.grid = { columns = 4, cells = cells }
     model.title = label.title
-    model.subtitle = #cells == 0 and "暂无内容" or ("共 " .. tostring(#cells) .. " 本")
+    if not model.official then model.subtitle = #cells == 0 and "暂无内容" or ("共 " .. tostring(#cells) .. " 本") end
     model.show_filters = false
-    model.show_pagination = false
+    model.show_pagination = model.official == true
     model.navigation = self:_navigation(label.active)
     model.actions = model.actions or {}
     if model.page == "library" then
-        model.actions.choose_batch_category = function()
-            return self:_show_batch_category_picker(model)
+        if model.official then
+            model.actions.choose_official_removal = function() return self:_show_official_removal_picker(model) end
+        else
+            model.actions.choose_batch_category = function() return self:_show_batch_category_picker(model) end
         end
     elseif model.page == "category_items" and model.actions.back then
         model.actions.categories_shelf = model.actions.back
@@ -608,43 +618,113 @@ function Adapter:_image_headers(site_id, url, provided)
 end
 
 function Adapter:_load_covers(model, grid)
-    if self.loader and type(self.loader.begin_session) == "function"
-        and type(self.loader.request) == "function" then
-        self:_cancel_covers()
-        local generation = self.loader:begin_session("cover")
-        self.cover_loader_generation = generation
+    local loader = self.cover_loader or self.loader
+    if loader and type(loader.begin_session) == "function"
+        and type(loader.request) == "function" then
         local indexes = {}
         for index in pairs(grid.cells or {}) do indexes[#indexes + 1] = index end
         table.sort(indexes, function(left, right) return tonumber(left) < tonumber(right) end)
+        local parts = { tostring(grid.cover_w), tostring(grid.cover_h) }
+        for _, index in ipairs(indexes) do
+            local cell = ((model.grid or {}).cells or {})[index] or {}
+            for _, value in ipairs{ tostring(index), tostring(cell.site_id or ""),
+                tostring(cell.comic_id or ""), tostring(cell.cover_url or "") } do
+                parts[#parts + 1] = #value .. ":" .. value
+            end
+        end
+        local identity = table.concat(parts, "\0")
+        if not self.cover_loader_generation or self.cover_grid ~= grid or self.cover_grid_identity ~= identity then
+            self:_cancel_covers()
+            self.cover_loader_generation = loader:begin_session("cover")
+            self.cover_grid, self.cover_grid_identity = grid, identity
+            self.cover_grid_requests = {}
+        end
+        local generation = self.cover_loader_generation
+        local requested = self.cover_grid_requests
+        local function spec_for(cell, key)
+            if not cell or type(cell.cover_url) ~= "string" or cell.cover_url == "" then return nil end
+            return { key = key, url = cell.cover_url, site_id = cell.site_id, comic_id = cell.comic_id,
+                stage = "cover", headers = self:_image_headers(cell.site_id, cell.cover_url, cell.cover_headers),
+                width = grid.cover_w, height = grid.cover_h }
+        end
+        local function background_key(cell)
+            local parts = { "prefetch" }
+            for _, value in ipairs{ tostring(cell.site_id or ""), tostring(cell.comic_id or ""),
+                tostring(cell.cover_url or "") } do parts[#parts + 1] = #value .. ":" .. value end
+            return table.concat(parts, "\0")
+        end
+        local background, visible = {}, {}
+        for _, index in ipairs(indexes) do
+            local cell = ((model.grid or {}).cells or {})[index]
+            if cell then visible[background_key(cell)] = true end
+        end
+        for _, cell in ipairs(((model.grid or {}).cells or {})) do
+            local key = background_key(cell)
+            local spec = not visible[key] and spec_for(cell, key)
+            if spec then background[#background + 1] = spec end
+        end
+        -- Protect the complete collection before any cache write or unpin can trim it.
+        for _, group in ipairs(model.cover_groups or {}) do
+            local specs, complete = {}, group.complete == true
+            for _, cell in ipairs(group.items or {}) do
+                local key = background_key(cell)
+                local spec = spec_for(cell, key)
+                if spec then
+                    specs[#specs + 1] = spec
+                    if not visible[key] then background[#background + 1] = spec end
+                else complete = false end
+            end
+            if type(loader.sync_protected) == "function" then
+                pcall(loader.sync_protected, loader, group.owner, specs, complete)
+            end
+        end
         for _, index in ipairs(indexes) do
             local cell = ((model.grid or {}).cells or {})[index]
             if cell and cell.cover_url and cell.cover_url ~= ""
                 and not (type(grid.has_cover) == "function"
                     and grid:has_cover(index, cell.cover_url)) then
                 local key = "cover:" .. tostring(index) .. ":" .. tostring(cell.cover_url)
-                self.loader:request(generation, {
-                    key = key, url = cell.cover_url, site_id = cell.site_id,
-                    stage = "cover", priority = 3,
-                    headers = self:_image_headers(cell.site_id, cell.cover_url, cell.cover_headers),
-                    width = grid.cover_w, height = grid.cover_h,
-                }, {
-                    on_ready = function(result)
-                        if generation ~= self.cover_loader_generation
-                            or self.widget ~= grid or grid.closed or grid.retired then
-                            return false
-                        end
-                        local buffer = result and result.buffer
-                        if not buffer then return false end
-                        local accepted = grid:set_cover(index, buffer)
-                        if accepted ~= false then self:_dirty_root() end
-                        return accepted ~= false
-                    end,
-                    on_error = function(error)
-                        self:_log_image_error(cell.site_id, "cover", cell.cover_url, error)
-                        return true
-                    end,
-                })
+                if not requested[key] then
+                    requested[key] = true
+                    loader:request(generation, {
+                        key = key, url = cell.cover_url, site_id = cell.site_id,
+                        comic_id = cell.comic_id,
+                        stage = "cover", priority = 3,
+                        headers = self:_image_headers(cell.site_id, cell.cover_url, cell.cover_headers),
+                        width = grid.cover_w, height = grid.cover_h,
+                    }, {
+                        on_ready = function(result)
+                            if generation == self.cover_loader_generation then requested[key] = nil end
+                            if generation ~= self.cover_loader_generation
+                                or self.widget ~= grid or grid.closed or grid.retired then
+                                return false
+                            end
+                            local buffer = result and result.buffer
+                            if not buffer then return false end
+                            local accepted = grid:set_cover(index, buffer)
+                            if accepted ~= false then self:_dirty_root() end
+                            return accepted ~= false
+                        end,
+                        on_error = function(error)
+                            if generation == self.cover_loader_generation then requested[key] = nil end
+                            self:_log_image_error(cell.site_id, "cover", cell.cover_url, error)
+                            return true
+                        end,
+                    })
+                end
             end
+        end
+        if type(loader.release) == "function" then
+            if not self.cover_prefetch then
+                self.cover_prefetch = CoverPrefetch:new{ loader = loader, generation = generation,
+                    alive = function()
+                        return self.cover_loader_generation == generation and self.widget == grid
+                            and not grid.closed and not grid.retired
+                    end,
+                    defer = function(callback) return self:defer(callback) end,
+                    on_error = function(spec, err) self:_log_image_error(spec.site_id, "cover", spec.url, err) end }
+            end
+            self.cover_prefetch:add(background)
         end
         return true
     end
@@ -884,35 +964,61 @@ function Adapter:_load_detail_cover(model, widget)
     local card = ((model or {}).detail or {}).card or {}
     local previews = (model or {}).preview_pages or {}
     local has_images = card.cover_url and card.cover_url ~= "" or #previews > 0
-    if self.loader and type(self.loader.begin_session) == "function"
-        and type(self.loader.request) == "function" then
+    local loader = self.cover_loader or self.loader
+    if loader and type(loader.begin_session) == "function"
+        and type(loader.request) == "function" then
         local identity = detail_image_identity(model)
         if not self.cover_loader_generation or self.detail_image_identity ~= identity then
             if not has_images then return end
             self:_cancel_covers()
-            self.cover_loader_generation = self.loader:begin_session("detail")
+            self.cover_loader_generation = loader:begin_session("detail")
             self.detail_image_identity = identity
             self.detail_image_requests = {}
             self.detail_image_targets = {}
+            self.detail_image_jobs = {}
             self.detail_image_order = 0
         end
         local generation = self.cover_loader_generation
         local requested = self.detail_image_requests
         local targets = self.detail_image_targets
+        local jobs = self.detail_image_jobs
+        local chapter_id = model.selected_chapter_id or card.chapter_id or card.default_chapter_id
+        local preview_offset = (math.max(1, tonumber(model.preview_page) or 1) - 1) * 4
+        local wanted = { ["detail:cover"] = card.cover_url and card.cover_url ~= "" and card.cover_url
+            or previews[1] and previews[1].url }
+        for index = 1, math.min(4, #previews) do
+            wanted["detail:preview:" .. tostring(index)] = previews[index].url
+        end
+        local function retire(role)
+            local job = jobs[role]
+            if not job then return end
+            jobs[role], requested[job.id] = nil, nil
+            if job.handle and type(job.handle.cancel) == "function" then job.handle:cancel() end
+            if type(loader.release) == "function" then loader:release(generation, job.key) end
+        end
+        local stale = {}
+        for role, job in pairs(jobs) do if wanted[role] ~= job.url then stale[#stale + 1] = role end end
+        for _, role in ipairs(stale) do retire(role) end
         targets["detail:cover"] = nil
         for index = 1, 4 do targets["detail:preview:" .. tostring(index)] = nil end
         if not has_images then return true end
-        local function queue(url, role, width, height, stage, headers, has_image, install)
+        local function queue(url, role, width, height, stage, headers, has_image, install, index)
             if not url or url == "" then return end
             targets[role] = url
-            if type(has_image) == "function" and has_image(url) then return end
             local request_id = role .. "\0" .. tostring(url)
+                .. (stage == "preview" and ("\0" .. tostring(chapter_id) .. "\0" .. tostring(index)) or "")
             if requested[request_id] then return end
+            if jobs[role] and jobs[role].id ~= request_id then retire(role) end
+            if type(has_image) == "function" and has_image(url) then return end
+            retire(role)
             requested[request_id] = true
             self.detail_image_order = (self.detail_image_order or 0) + 1
             local loader_key = request_id .. "\0" .. tostring(self.detail_image_order)
-            self.loader:request(generation, {
+            local job = { id = request_id, key = loader_key, url = url }
+            jobs[role] = job
+            job.handle = loader:request(generation, {
                 key = loader_key, url = url, site_id = card.site_id, stage = stage,
+                comic_id = card.comic_id, chapter_id = chapter_id, index = index,
                 priority = 2, headers = self:_image_headers(card.site_id, url, headers),
                 width = width, height = height,
             }, {
@@ -935,6 +1041,18 @@ function Adapter:_load_detail_cover(model, widget)
                     if generation == self.cover_loader_generation then
                         requested[request_id] = nil
                     end
+                    if stage == "preview" and generation == self.cover_loader_generation
+                        and self.widget == widget and not widget.closed and not widget.retired
+                        and targets[role] == url then
+                        -- Rebuild only the existing native view. Publishing here
+                        -- would immediately submit the same failed jobs again.
+                        model.preview_state = "error"
+                        model.preview_error = Models.error(error, card.site_id, "preview", "image_error")
+                        if type(widget.update_model) == "function" then
+                            pcall(widget.update_model, widget, model)
+                        end
+                        self:_dirty_root()
+                    end
                     self:_log_image_error(card.site_id, stage, url, error)
                     return true
                 end,
@@ -946,10 +1064,11 @@ function Adapter:_load_detail_cover(model, widget)
                 function(url) return widget:has_cover(url) end,
                 function(buffer, url) return widget:set_cover(buffer, url) end)
         elseif previews[1] and previews[1].url and previews[1].url ~= "" then
-            queue(previews[1].url, "detail:cover", widget.cover_w, widget.cover_h, "cover",
+            queue(previews[1].url, "detail:cover", widget.cover_w, widget.cover_h, "preview",
                 previews[1].headers,
                 function(url) return widget:has_cover(url) end,
-                function(buffer, url) return widget:set_cover(buffer, url) end)
+                function(buffer, url) return widget:set_cover(buffer, url) end,
+                preview_offset + 1)
         end
         for index = 1, math.min(4, #previews) do
             local page = previews[index]
@@ -958,7 +1077,8 @@ function Adapter:_load_detail_cover(model, widget)
                 queue(page.url, "detail:preview:" .. tostring(preview_index), widget.preview_w,
                     widget.preview_h, "preview", page.headers,
                     function(url) return widget:has_preview(preview_index, url) end,
-                    function(buffer, url) return widget:set_preview(preview_index, buffer, url) end)
+                    function(buffer, url) return widget:set_preview(preview_index, buffer, url) end,
+                    preview_offset + preview_index)
             end
         end
         return true
@@ -1059,7 +1179,7 @@ function Adapter:_items_for(model)
     model = model or {}
     local items = {
         { text = "退出插件", callback = function() return self:_confirm_exit() end },
-        { text = "本地收藏", callback = function() return self.shell and self.shell:show("library") end },
+        { text = "收藏", callback = function() return self.shell and self.shell:show("library") end },
         { text = "阅读历史", callback = function() return self.shell and self.shell:show("history") end },
         { text = "站点中心", callback = function() return self.shell and self.shell:show("site_center") end },
     }
@@ -1174,8 +1294,26 @@ function Adapter:_items_for(model)
                         callback = function() return call_action(actions.select_category, current.id) end,
                     }
                 end
-                items[#items + 1] = { text = "管理分类", callback = actions.manage_categories }
-                items[#items + 1] = { text = "多选", callback = actions.begin_selection }
+                if model.official then
+                    items[#items + 1] = { text = "刷新官方收藏", enabled = not model.busy, callback = actions.refresh }
+                    items[#items + 1] = { text = "取消官方收藏", enabled = not model.busy and model.state == "ready",
+                        callback = function() return self:_show_official_removal_picker(model) end }
+                    if model.error or model.state == "loading" or model.state == "empty" then
+                        items[#items + 1] = { text = (model.error or {}).user_message or model.loading_message
+                            or model.empty_message, enabled = false }
+                    end
+                    if model.error and model.error.code == "login_required" then
+                        items[#items + 1] = { text = "重新登录 Zero", callback = actions.relogin }
+                    end
+                    if (model.total_pages or 1) > 1 then
+                        items[#items + 1] = { text = "上一页", callback = actions.previous_page }
+                        items[#items + 1] = { text = tostring(model.page_number) .. "/" .. tostring(model.total_pages), enabled = false }
+                        items[#items + 1] = { text = "下一页", callback = actions.next_page }
+                    end
+                else
+                    items[#items + 1] = { text = "管理分类", callback = actions.manage_categories }
+                    items[#items + 1] = { text = "多选", callback = actions.begin_selection }
+                end
             end
         end
         for _, record in ipairs(model.items or {}) do
@@ -1320,7 +1458,7 @@ function Adapter:_show_local_category_picker(options)
     for _, category in ipairs(options.categories or {}) do
         local current = category
         rows[#rows + 1] = { kind = "action",
-            text = tonumber(options.selected_id) == tonumber(current.id)
+            text = tostring(options.selected_id) == tostring(current.id)
                 and "[" .. tostring(current.name) .. "]" or tostring(current.name),
             callback = function() return choose(current) end }
     end
@@ -1371,7 +1509,7 @@ end
 function Adapter:_show_batch_category_picker(model)
     local categories = {}
     for index = 2, #((model or {}).tabs or {}) do
-        categories[#categories + 1] = model.tabs[index]
+        if model.tabs[index].kind ~= "official" then categories[#categories + 1] = model.tabs[index] end
     end
     return self:_show_local_category_picker{
         title = "批量调整分类", categories = categories,
@@ -1665,7 +1803,12 @@ function Adapter:_render(model, force_menu)
     local keep_detail_images = not force_menu and previous and model
         and previous.page_id == "detail" and model.page == "detail"
         and self.detail_image_identity == detail_image_identity(model)
-    if not keep_detail_images then self:_cancel_covers() end
+    local keep_grid_images = not force_menu and previous and model
+        and (model.page == "browse" or model.page == "library"
+            or model.page == "history" or model.page == "category_items")
+        and previous.page_id == model.page and previous == self.cover_grid
+        and type(previous.update_model) == "function"
+    if not keep_detail_images and not keep_grid_images then self:_cancel_covers() end
     if self.error_widget and manager.close then manager:close(self.error_widget) end
     self.error_widget = nil
     local widget, after_show
@@ -1707,6 +1850,7 @@ function Adapter:_render(model, force_menu)
     if self.filter_picker and manager.close then manager:close(self.filter_picker) end
     self.filter_picker = nil
     if not widget then
+        if keep_detail_images or keep_grid_images then self:_cancel_covers() end
         local fallback_built, fallback_error = pcall(function()
             local menu
             local function route_back()
@@ -1784,6 +1928,95 @@ function Adapter:_close_reader_controls()
     elseif current and manager and manager.close then
         pcall(manager.close, manager, current)
     end
+    return true
+end
+
+function Adapter:_official_model_current(model)
+    return self.shell and type(self.shell.model) == "function" and self.shell:model() == model
+        and model.page == "library" and model.official and not model.busy and not model.error
+end
+
+function Adapter:_build_official_dialog(options)
+    local ok, panel = pcall(function() return self:_category_panel():show(options) end)
+    if ok and panel then return panel end
+    if not self.menu then return nil end
+    local items = {}
+    if options.status then items[#items + 1] = { text = options.status, enabled = false } end
+    for _, row in ipairs(options.rows or {}) do
+        items[#items + 1] = { text = row.text, callback = row.callback, enabled = row.kind == "action" }
+    end
+    for _, button in ipairs(options.actions or {}) do items[#items + 1] = button end
+    return self.menu:new{
+        title = options.title, item_table = items, modal = true,
+        covers_fullscreen = false, is_popout = true, single_line = false,
+        close_callback = options.on_back,
+        onMenuSelect = function(_, item) return call_action(item and item.callback) end,
+    }
+end
+
+function Adapter:_show_official_removal_picker(model)
+    if not self:_official_model_current(model) or model.state ~= "ready" then return false end
+    local manager = self.ui_manager
+    if not manager or type(manager.show) ~= "function" then return false end
+    if self.filter_picker and manager.close then manager:close(self.filter_picker) end
+    local picker, closed
+    local function close()
+        if closed then return true end
+        closed = true
+        if picker and manager.close then manager:close(picker) end
+        if self.filter_picker == picker then self.filter_picker = nil end
+        return true
+    end
+    local rows = {}
+    for _, record in ipairs(model.items or {}) do
+        local item = record
+        rows[#rows + 1] = { kind = "action", text = tostring(item.title or "漫画"), callback = function()
+            if closed or self.filter_picker ~= picker or not self:_official_model_current(model) then return false end
+            close()
+            return self:_confirm_official_removal(model, item)
+        end }
+    end
+    picker = self:_build_official_dialog{
+        page = "official_remove_picker", title = "选择要取消的官方收藏", modal = true,
+        status = "取消后也会从 Zero 网页端收藏夹移除。",
+        rows = rows, actions = { { text = "返回", callback = close } }, on_back = close, on_close = close,
+    }
+    if not picker then return false end
+    self.filter_picker = picker
+    manager:show(picker)
+    return true
+end
+
+function Adapter:_confirm_official_removal(model, record)
+    if not self:_official_model_current(model) then return false end
+    local actions, manager = model.actions or {}, self.ui_manager
+    if type(actions.remove_official) ~= "function" or type(actions.can_remove_official) ~= "function"
+        or not actions.can_remove_official(record) or not manager or not manager.show then return false end
+    local confirmation, finished
+    local function close()
+        if finished then return true end
+        finished = true
+        if confirmation and manager.close then manager:close(confirmation) end
+        if self.filter_picker == confirmation then self.filter_picker = nil end
+        return true
+    end
+    confirmation = self:_build_official_dialog{
+        page = "official_remove_confirm", title = "取消官方收藏", modal = true,
+        status = "确定取消“" .. tostring(record.title or "漫画") .. "”的官方收藏？\n同时取消 Zero 网页端收藏，本地收藏保持不变。",
+        actions = {
+            { text = "返回", callback = close },
+            { text = "确定取消收藏", callback = function()
+                if finished or self.filter_picker ~= confirmation or not self:_official_model_current(model)
+                    or not actions.can_remove_official(record) then return false end
+                close()
+                local ok, result = pcall(actions.remove_official, record)
+                return ok and result ~= false
+            end },
+        }, on_back = close, on_close = close,
+    }
+    if not confirmation then return false end
+    self.filter_picker = confirmation
+    manager:show(confirmation)
     return true
 end
 
@@ -1918,17 +2151,23 @@ function Adapter:_show_reader_controls(section)
     local title, items
     if section == "reading" then
         title = "阅读翻页"
-        local preload = math.max(0, math.min(10,
-            math.floor(tonumber(setting("preload_pages", 3)) or 3)))
         local direction = setting("direction", "ltr")
         items = {
             item(direction == "rtl" and "方向：日漫反向" or "方向：普通", function()
                 return update{ direction = direction == "rtl" and "ltr" or "rtl" }
             end),
-            item("预加载页数：" .. tostring(preload), function()
-                return update{ preload_pages = (preload + 1) % 11 }
-            end),
         }
+    elseif section == "preload" then
+        title, items = "阅读预加载", {}
+        local selected = math.max(0, math.min(10,
+            math.floor(tonumber(setting("preload_pages", 3)) or 3)))
+        for count = 0, 10 do
+            local pages = count
+            local text = pages == 0 and "关闭预加载" or ("后续" .. tostring(pages) .. "页")
+            items[#items + 1] = item((pages == selected and "✓ " or "") .. text, function()
+                return update{ preload_pages = pages }
+            end)
+        end
     elseif section == "display" then
         title = "图片显示"
         local fit = setting("fit_mode", "page")
@@ -1971,6 +2210,7 @@ function Adapter:_show_reader_controls(section)
         section, title = "root", "阅读设置"
         items = {
             item("阅读翻页", function() return show_section("reading") end),
+            item("阅读预加载", function() return show_section("preload") end),
             item("图片显示", function() return show_section("display") end),
             item("宽图拆分", function() return show_section("split") end),
             item("漫画去灰增强", function() return show_section("gray") end),
@@ -2000,6 +2240,7 @@ function Adapter:_show_reader_controls(section)
     }
     local model = {
         modal = true, title = title, rows = rows_from(items), navigation = navigation,
+        status = section == "preload" and "提前下载后续图片，完成后翻页直接读取缓存。默认3页。" or nil,
         on_back = section == "root" and close_controls
             or function() return show_section("root") end,
         on_close = close_controls,

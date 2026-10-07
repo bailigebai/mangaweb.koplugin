@@ -5,6 +5,7 @@ local Registry = require("mangaweb.source_registry")
 local Shell = require("mangaweb.ui.shell")
 local RemoteChapterIndex = require("mangaweb.remote_chapter_index")
 local ImageLoader = require("mangaweb.image_loader")
+local CoverLoader = require("mangaweb.cover_loader")
 local SiteDefinitions = require("mangaweb.site_definitions")
 local SiteManager = require("mangaweb.site_manager")
 
@@ -53,6 +54,7 @@ local function ensure_license_runtime(options)
 end
 
 local function ensure_loader(options)
+    options.catalogue_cache = options.catalogue_cache or require("mangaweb.catalogue_cache"):new{}
     local loader = options.loader or (options.reader and options.reader.loader)
     if not loader and options.http and options.temp_files then
         loader = ImageLoader:new{ http = options.http, temp_files = options.temp_files,
@@ -67,6 +69,13 @@ local function ensure_loader(options)
         end
         if options.ui then options.ui.loader = loader end
     end
+    if not options.cover_loader and options.http and options.temp_files then
+        options.cover_cache = options.cover_cache or require("mangaweb.page_cache"):new{
+            directory = "covers", upper_bytes = 48 * 1048576, lower_bytes = 32 * 1048576 }
+        options.cover_loader = CoverLoader:new{ http = options.http, temp_files = options.temp_files,
+            cache = options.cover_cache, page_cache = options.page_cache, logger = options.logger }
+    end
+    if options.ui then options.ui.cover_loader = options.cover_loader end
     return loader
 end
 
@@ -124,7 +133,7 @@ local function default_runtime(options)
     local ui = options.ui
     if not ui or type(ui.show_fullscreen) ~= "function" then
         ui = require("mangaweb.ui.koreader"):new{ http = http, temp_files = temp_files,
-            loader = options.loader }
+            loader = options.loader, cover_loader = options.cover_loader }
         options.ui = ui
     elseif ui.loader == nil then
         ui.loader = options.loader
@@ -180,6 +189,8 @@ function App:new(options)
         http = options.http,
         logger = options.logger,
         loader = options.loader,
+        cover_loader = options.cover_loader,
+        catalogue_cache = options.catalogue_cache,
         license = options.license,
         license_dialog = options.license_dialog,
         site_manager = options.site_manager,
@@ -233,7 +244,8 @@ function App:show()
     end
     self.opened = true
     if not self.ui or type(self.ui.show_fullscreen) ~= "function" then
-        self.ui = require("mangaweb.ui.koreader"):new{ http = self.http, loader = self.loader }
+        self.ui = require("mangaweb.ui.koreader"):new{
+            http = self.http, loader = self.loader, cover_loader = self.cover_loader }
     end
     if self.license and not self.license_dialog then
         self.license_dialog = require("mangaweb.license_dialog"):new{
@@ -255,6 +267,7 @@ function App:show()
         license_dialog = self.license_dialog,
         site_manager = self.site_manager,
         on_close = function() return self:close() end,
+        catalogue_cache = self.catalogue_cache,
         on_start_reading = function(card, reader_context)
             if not self.reader or type(self.reader.open) ~= "function" then
                 return false, "reader_unavailable"

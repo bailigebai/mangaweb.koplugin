@@ -421,7 +421,7 @@ function Transport:_request_sync(request, done)
     -- Some Kindle LuaSec builds report success but never call a custom sink.
     -- Retry once with a plain table sink so the response body is still captured.
     -- Never replay a POST redirect: Base:_post_form must see it and follow it as GET.
-    if ok and not canceled and not response_too_large and body == ""
+    if ok and not canceled and not response_too_large and not request.no_replay and body == ""
         and ((request.method or "GET") == "GET"
             and (not reported_status or reported_status >= 200 and reported_status < 400)
             or (request.method or "GET") == "POST"

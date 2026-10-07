@@ -115,6 +115,7 @@ function Http:request(spec, callbacks)
         inline_response = spec.inline_response,
         binary = spec.binary,
         ui_nonblocking = spec.ui_nonblocking,
+        no_replay = spec.no_replay,
     }
     local function finish(status, headers, body, err)
         self:_finish(request, status, headers, body, err)
@@ -150,6 +151,7 @@ function Http:get(url, options, callbacks)
         inline_response = options.inline_response,
         binary = options.binary,
         ui_nonblocking = options.ui_nonblocking,
+        no_replay = options.no_replay,
     }, callbacks)
 end
 
@@ -256,6 +258,7 @@ function Http:post_form(url, fields, options, callbacks)
         site_id = options.site_id,
         inline_response = options.inline_response,
         ui_nonblocking = options.ui_nonblocking,
+        no_replay = options.no_replay,
     }, callbacks)
 end
 

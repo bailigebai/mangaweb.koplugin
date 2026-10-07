@@ -21,6 +21,7 @@ function Detail:new(options)
     return setmetatable({ source = options.source, store = options.store, shell = options.shell,
         view_token = options.view_token, request_token = 0, pages_requests = {}, closed = false,
         scheduler = options.scheduler, logger = options.logger,
+        cache = options.cache or (options.shell and options.shell.detail_cache),
         pages_timeout = tonumber(options.pages_timeout) or 25 }, self)
 end
 
@@ -153,6 +154,14 @@ end
 -- request has already succeeded.
 function Detail:_request_pages(chapter_id, callbacks)
     callbacks = callbacks or {}
+    local comic_id = (self.shell:model().detail or {}).card.comic_id
+    local cache_key = self.cache and self.cache:key(self.source, comic_id, chapter_id, "pages")
+    local cached = self.cache and self.cache:get(self.source, comic_id, chapter_id, "pages")
+    if cached then
+        self:_log("Detail:pages_request.cache_hit", chapter_id)
+        if type(callbacks.on_success) == "function" then callbacks.on_success(cached) end
+        return true
+    end
     local key = self:_pages_request_key(chapter_id)
     local pending = self.pages_requests[key]
     if pending then
@@ -174,6 +183,9 @@ function Detail:_request_pages(chapter_id, callbacks)
         local extra = { result = kind }
         if kind == "success" then
             extra.pages = type(value) == "table" and type(value.pages) == "table" and #value.pages or 0
+            if cache_key and extra.pages > 0 then
+                self.cache:put(self.source, comic_id, chapter_id, "pages", value, cache_key)
+            end
         elseif type(value) == "table" then
             extra.code = value.code or "unknown"
             extra.status = value.status or "?"
@@ -256,6 +268,9 @@ end
 
 function Detail:show(card, options)
     options = options or {}
+    if options.refresh and self.cache then
+        self.cache:invalidate(self.source, card.comic_id, nil, "detail")
+    end
     local request_token = self:_next_request()
     local function publish(detail, state, error_value)
         if not self:_is_current(request_token) then return false end
@@ -290,8 +305,16 @@ function Detail:show(card, options)
             return_options = options.return_options or self.shell.return_options,
             error = error_value, actions = {
             start_reading = function() return self:start_reading() end,
-            retry = function() return self:show(card, options) end,
+            retry = function()
+                local refreshed = {}
+                for key, value in pairs(options) do refreshed[key] = value end
+                refreshed.refresh = true
+                return self:show(card, refreshed)
+            end,
             preview_retry = function()
+                if self.cache then
+                    self.cache:invalidate(self.source, card.comic_id, self.selected_chapter_id, "pages")
+                end
                 return self:_load_previews(self.shell:model(), self.selected_chapter_id)
             end,
             preview_previous_page = function() return self:_change_preview_page(-1) end,
@@ -336,13 +359,25 @@ function Detail:show(card, options)
         end
         if not self:_publish(model, request_token) then return false end
         if state or error_value then return true end
+        if options.refresh and self.cache then
+            self.cache:invalidate(self.source, card.comic_id, self.selected_chapter_id, "pages")
+        end
         if has_pages_source then return self:_load_previews(model, self.selected_chapter_id, true) end
         return true
     end
     if self.source and type(self.source.detail) == "function" then
+        local cache_key = self.cache and self.cache:key(self.source, card.comic_id, nil, "detail")
+        local cached = self.cache and self.cache:get(self.source, card.comic_id, nil, "detail")
+        if cached then
+            self:_log("Detail:detail_request.cache_hit")
+            return publish(cached)
+        end
         local completed = false
         local result = self.source:detail(card.comic_id, { on_success = function(detail)
             completed = true
+            if cache_key and self:_is_current(request_token) then
+                self.cache:put(self.source, card.comic_id, nil, "detail", detail, cache_key)
+            end
             return publish(detail)
         end,
             on_error = function(error)

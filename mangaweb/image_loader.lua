@@ -3,6 +3,11 @@ local ImageDimensions = require("mangaweb.image_dimensions")
 local ImageLoader = {}
 ImageLoader.__index = ImageLoader
 
+local function runtime_clock()
+    local ok, socket = pcall(require, "socket")
+    return ok and type(socket.gettime) == "function" and socket.gettime or os.time
+end
+
 local function free(buffer)
     if buffer and type(buffer.free) == "function" then pcall(buffer.free, buffer) end
 end
@@ -58,20 +63,26 @@ function ImageLoader:new(options)
         page_cache = options.page_cache,
         render_image = options.render_image,
         logger = options.logger,
-        max_active = math.max(1, math.min(2, tonumber(options.max_active) or 2)),
+        clock = options.clock or runtime_clock(),
+        max_active = math.max(1, math.min(6, tonumber(options.max_active) or 2)),
+        max_processing = tonumber(options.max_processing) or math.huge, processing_count = 0,
         active_count = 0, sequence = 0, order = 0, sessions = {}, queue = {},
     }, self)
 end
 
 function ImageLoader:_log(job, event, code)
     local logger = self.logger
-    if not logger or type(logger.warn) ~= "function" or job.priority ~= 1 then return end
+    if not logger or type(logger.warn) ~= "function" or (tonumber(job.priority) or 3) > 3 then return end
     local site = tostring(job.site_id or "?")
     if #site > 32 or not site:match("^[%w_%-]+$") then site = "?" end
     local safe_code = tostring(code or "-")
     if #safe_code > 32 or not safe_code:match("^[%w_%-]+$") then safe_code = "?" end
+    local stage = tostring(job.diagnostic_stage or job.stage or "?")
+    if #stage > 16 or not stage:match("^[%w_%-]+$") then stage = "?" end
+    local now = self.clock()
+    local elapsed = math.max(0, math.floor((now - (job.queued_at or now)) * 1000))
     pcall(logger.warn, "MangaWeb ImageLoader", event, "site", site,
-        "page", tonumber(job.index) or 0, "code", safe_code)
+        "stage", stage, "page", tonumber(job.index) or 0, "elapsed_ms", elapsed, "code", safe_code)
 end
 
 function ImageLoader:begin_session(kind)
@@ -246,11 +257,13 @@ function ImageLoader:_drop(job)
             if session.raw_by_url[job.raw_key] == raw then session.raw_by_url[job.raw_key] = nil end
             raw.orphan = true
             local owner = raw.owner
-            if owner and owner.file_download and owner.operation
-                and type(owner.operation.cancel) == "function" and not raw.cancel_requested then
+            local operation = raw.operation or (owner and owner.file_download and owner.operation)
+            if operation and type(operation.cancel) == "function" and not raw.cancel_requested then
                 raw.cancel_requested = true
-                pcall(owner.operation.cancel, owner.operation)
+                pcall(operation.cancel, operation)
+                raw.operation = nil
             end
+            if owner and owner.inline_download then self:_stop_worker(owner) end
         elseif (raw.retain_count or 0) == 0 then
             self:_release_retained_pin(raw)
             if raw.path and not raw.persistent and not raw.borrowed then self.temp_files:remove(raw.path) end
@@ -266,6 +279,7 @@ function ImageLoader:_stop_worker(job)
     self.active_count = self.active_count - 1
     if job.processing then
         job.processing = false
+        self.processing_count = self.processing_count - 1
         job.session.processing = job.session.processing - 1
     end
     job.operation = nil
@@ -329,10 +343,18 @@ function ImageLoader:_process_impl(job)
     local raw = job.raw
     if job.canceled or job.session.canceled then return self:_failed(job) end
     if job.profile then
+        if self.processing_count >= self.max_processing then
+            self:_stop_worker(job)
+            self:_enqueue(job)
+            return self:_pump()
+        end
         raw.retained = true
-        local output = self.temp_files:path(job.session.temp, "processed-" .. job.order, "png")
+        local extension = job.profile.extension == "jpg" and "jpg" or "png"
+        local output = self.temp_files:path(job.session.temp, "processed-" .. job.order, extension)
         job.output = self.temp_files:track(job.session.temp, output)
         job.processing = true
+        self:_log(job, "process_start")
+        self.processing_count = self.processing_count + 1
         job.session.processing = job.session.processing + 1
         local launching, completion = true, nil
         local function complete()
@@ -451,20 +473,26 @@ function ImageLoader:_start(job)
     if raw.path then return self:_process(job) end
     if raw.error then return self:_failed(job, raw.error) end
     raw.loading, raw.attempts = true, raw.attempts + 1
+    self:_log(job, "download_start")
     if job.stage == "page" or job.stage == "image" then
         return self:_start_file(job)
     end
+    raw.owner, raw.cancel_requested = job, false
+    job.inline_download = true
     local settled = false
     local function finished(body, response, err)
         if settled then return end
         settled = true
+        job.inline_download = false
         raw.loading = false
+        raw.operation = nil
         if not err and response and tonumber(response.status) and tonumber(response.status) >= 400 then
             err = { code = "http_error", status = tonumber(response.status) }
         end
         if not err and (type(body) ~= "string" or body == "") then err = { code = "image_error" } end
         if not err and not content_extension(body) then err = { code = "image_error" } end
         if job.dropped or job.canceled or job.orphan or job.session.canceled then
+            self:_stop_worker(job)
             if (job.dropped or job.canceled) and raw.refs > 0
                 and job.session.raw_by_url[job.raw_key] == raw and not job.session.canceled then
                 if not err then
@@ -511,6 +539,7 @@ function ImageLoader:_start(job)
             if raw.attempts >= 2 then raw.error = err end
             return self:_failed(job, err)
         end
+        self:_log(job, "download_ready")
         self:_process(job)
     end
     local ok, operation = pcall(self.http.get, self.http, job.url,
@@ -524,7 +553,9 @@ function ImageLoader:_start(job)
             on_error = function(err) finished(nil, nil, err) end,
         })
     if not ok then finished(nil, nil, { code = "transport_error" })
-    elseif not settled then job.operation = operation end
+    elseif not settled then
+        job.operation, raw.operation = operation, operation
+    end
 end
 
 function ImageLoader:_pump()
@@ -533,7 +564,8 @@ function ImageLoader:_pump()
     while self.active_count < self.max_active do
         local next_job
         for index, job in ipairs(self.queue) do
-            if not job.raw.loading then
+            if not job.raw.loading and not (job.profile and job.raw.path
+                and self.processing_count >= self.max_processing) then
                 next_job = table.remove(self.queue, index)
                 break
             end
@@ -564,6 +596,7 @@ function ImageLoader:request(generation, spec, callbacks)
     local job = {}
     for key, value in pairs(spec) do job[key] = value end
     job.session, job.order, job.waiters = session, self.order, { callbacks }
+    job.queued_at = self.clock()
     job.priority = tonumber(job.priority) or 3
     if job.priority ~= job.priority or job.priority < 1 or job.priority > 4 then job.priority = 3 end
     job.stage = job.stage or ((job.priority == 2 or job.priority == 3) and "cover" or "page")
@@ -575,8 +608,8 @@ function ImageLoader:request(generation, spec, callbacks)
     -- Page identity stays stable across filter epochs. Different pages using
     -- one CDN URL still have separate originals, while previews and settings
     -- changes share the owning raw object and consume its temporary retention.
-    job.raw_key = self.page_cache and job.cache_identity
-        and cache_raw_key(job) or job.url
+    job.raw_key = type(job.raw_scope) == "string" and (job.url .. "\0" .. job.raw_scope)
+        or self.page_cache and job.cache_identity and cache_raw_key(job) or job.url
     job.raw = session.raw_by_url[job.raw_key] or { refs = 0, attempts = 0, retain_count = 0 }
     if type(job.source_path) == "string" and not job.raw.path then
         -- Preview borrows the active reader's original. Its owner keeps the
@@ -596,6 +629,10 @@ function ImageLoader:request(generation, spec, callbacks)
             owner:_drop(job)
         elseif job.active and job.file_download then
             owner:_drop(job)
+        elseif job.active and job.inline_download then
+            -- Another queued consumer can still need this shared transfer.
+            -- Keep its slot until completion, or cancel when the last reference drops.
+            owner:_drop(job)
         elseif job.active then
             owner:_stop_worker(job)
             owner:_drop(job)
@@ -606,6 +643,7 @@ function ImageLoader:request(generation, spec, callbacks)
         return true
     end }
     session.jobs_by_key[job.key] = job
+    self:_log(job, "queued")
     self:_enqueue(job)
     if job.priority == 1 and self.active_count >= self.max_active then
         local farthest, distance = nil, -1
@@ -661,7 +699,7 @@ function ImageLoader:cancel_generation(generation)
     for _, job in pairs(session.jobs_by_key) do jobs[#jobs + 1] = job end
     for _, job in ipairs(jobs) do
         job.handle:cancel()
-        if job.active and not job.processing and not job.file_download then
+        if job.active and not job.processing and not job.file_download and not job.inline_download then
             job.raw.loading = false
             self:_failed(job)
         end

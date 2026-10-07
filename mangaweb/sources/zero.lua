@@ -1,5 +1,6 @@
 local Base = require("mangaweb.sources.base")
 local Models = require("mangaweb.models")
+local Favorites = require("mangaweb.sources.zero_favorites")
 
 local Zero = setmetatable({}, { __index = Base })
 Zero.__index = Zero
@@ -17,8 +18,12 @@ end
 function Zero:meta() return { id = self.id, name = self.name, origin = self.origin } end
 function Zero:capabilities()
     return { categories = true, tags = true, search = true, pages = true, login = true,
-        combined_filters = false }
+        combined_filters = false, official_favorites = true }
 end
+
+function Zero:parse_favorites(body) return Favorites.parse(self, body) end
+function Zero:favorites(options, callbacks) return Favorites.list(self, options, callbacks) end
+function Zero:remove_favorite(comic_id, callbacks) return Favorites.remove(self, comic_id, callbacks) end
 
 local function checked(body, stage, site_id)
     return Base.guard_body(body, site_id, stage)

@@ -2,6 +2,7 @@ local Models = require("mangaweb.models")
 local PageProcessor = require("mangaweb.page_processor")
 local PageSequence = require("mangaweb.page_sequence")
 local Presets = require("mangaweb.filter_presets")
+local ImageIdentity = require("mangaweb.image_identity")
 
 local Reader = {}
 Reader.__index = Reader
@@ -170,14 +171,17 @@ function Reader:_display(entry, wanted_segment)
     self:_save_history()
     self.target = entry.index
     if self.page_cache and type(self.page_cache.set_position) == "function" then
-        pcall(self.page_cache.set_position, self.page_cache, {
-            site_id = self.context.site_id, comic_id = self.context.comic_id,
-            chapter_id = self.context.chapter_id or self.context.default_chapter_id,
-            index = entry.index, url = page.url,
-        })
+        pcall(self.page_cache.set_position, self.page_cache, self:_cache_identity(entry.index))
     end
     self:_prefetch_after(entry.index)
     return true
+end
+
+function Reader:_cache_identity(index)
+    local page = self.context.pages[index] or {}
+    return ImageIdentity.page({ site_id = self.context.site_id, comic_id = self.context.comic_id,
+        chapter_id = self.context.chapter_id or self.context.default_chapter_id,
+        index = index, url = page.url }, page.headers, self.page_cache and self.page_cache.sha256)
 end
 
 function Reader:_request(index, wanted_segment, is_prefetch, force, loading_shown)
@@ -273,10 +277,7 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
             width = entry.source_metadata.width, height = entry.source_metadata.height,
             source_path = self.reprocessing_sources and self.reprocessing_sources[index],
             profile = self:_profile(page, entry.source_metadata),
-            cache_identity = { site_id = self.context.site_id,
-                comic_id = self.context.comic_id,
-                chapter_id = self.context.chapter_id or self.context.default_chapter_id,
-                index = index, url = page.url },
+            cache_identity = self:_cache_identity(index),
         }, { on_ready = ready, on_error = failed, on_progress = progress })
         return true
     end
@@ -479,12 +480,27 @@ function Reader:update_settings(changes)
     local saved, reason = self.settings:save_reader_settings(values)
     if not saved then return false, reason end
     self.reader_settings = self.settings:reader_settings()
-    self:_configure_cache()
-    local cache_only = true
-    for key in pairs(changes or {}) do
-        if key ~= "cache_upper_mb" and key ~= "cache_lower_mb" then cache_only = false end
+    if changes and (changes.cache_upper_mb ~= nil or changes.cache_lower_mb ~= nil) then
+        self:_configure_cache()
     end
-    if cache_only then return true end
+    local window_only = true
+    for key in pairs(changes or {}) do
+        if key ~= "cache_upper_mb" and key ~= "cache_lower_mb" and key ~= "preload_pages" then
+            window_only = false
+        end
+    end
+    if window_only then
+        if not self.closed then
+            -- A pending jump keeps priority over speculation. Its completion
+            -- will prefetch using the new window; the current image stays intact.
+            local current = self.position and self.entries[self.position]
+            if self.target == self.position and current and current.ready then
+                self:_prefetch_after(self.position)
+            end
+            self:_evict()
+        end
+        return true
+    end
     if self.closed then return true end
     self.processing_epoch = self.processing_epoch + 1
     self.generation = self.generation + 1
@@ -575,8 +591,7 @@ function Reader:preview_filter(kind, preset, callbacks)
     local called, pending = pcall(self.loader.request, self.loader, loader_generation, {
         key=key,index=index,url=page.url,headers=page.headers,profile=profile,
         source_path=entry.raw_path,site_id=self.context.site_id,stage="image",priority=1,
-        cache_identity={site_id=self.context.site_id,comic_id=self.context.comic_id,
-            chapter_id=self.context.chapter_id or self.context.default_chapter_id,index=index,url=page.url},
+        cache_identity=self:_cache_identity(index),
     }, {on_ready=ready,on_error=function(reason)
         if not canceled and not self.closed and self.generation==generation and callbacks.on_error then
             callbacks.on_error(reason)

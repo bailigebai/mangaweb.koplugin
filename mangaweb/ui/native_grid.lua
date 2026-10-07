@@ -253,6 +253,7 @@ function NativeGrid:show(model)
                         text = current.active and "[" .. tostring(current.name) .. "]"
                             or tostring(current.name),
                         width = part, height = self.compact_h,
+                        enabled = not model.busy,
                         callback = function()
                             return action((model.actions or {}).select_category, current.id)
                         end }
@@ -262,12 +263,19 @@ function NativeGrid:show(model)
                         height = self.compact_h,
                         callback = function() return action(d.on_collection_categories, model) end }
                 end
-                row[#row + 1] = Button:new{ text = "管理分类", width = part,
+                row[#row + 1] = Button:new{ text = model.official and "刷新" or "管理分类", width = part,
                     height = self.compact_h,
-                    callback = function() return action((model.actions or {}).manage_categories) end }
-                row[#row + 1] = Button:new{ text = "多选",
+                    enabled = not model.busy,
+                    callback = function()
+                        return action((model.actions or {})[model.official and "refresh" or "manage_categories"])
+                    end }
+                row[#row + 1] = Button:new{ text = model.official and "取消收藏" or "多选",
                     width = self.screen_w - part * (count - 1), height = self.compact_h,
-                    callback = function() return action((model.actions or {}).begin_selection) end }
+                    enabled = not model.busy and (not model.official or model.state == "ready" and not model.error
+                        and #((model.grid or {}).cells or {}) > 0),
+                    callback = function()
+                        return action((model.actions or {})[model.official and "choose_official_removal" or "begin_selection"])
+                    end }
                 self.channel_row = row
                 return row
             end
@@ -411,10 +419,10 @@ function NativeGrid:show(model)
             rows[1] = status_content(message,
                 login_error and actions.relogin and "重新登录" or "重试", callback)
         elseif state == "loading" then
-            rows[1] = status_content("加载中")
+            rows[1] = status_content(model.loading_message or "加载中")
         elseif state == "empty" then
             local clear = (model.actions or {}).apply_channel
-            rows[1] = status_content("当前条件没有漫画", "清除筛选",
+            rows[1] = status_content(model.empty_message or "当前条件没有漫画", "清除筛选",
                 type(clear) == "function" and function() return clear("home") end or nil)
         else
             local cells = (model.grid or {}).cells or {}
