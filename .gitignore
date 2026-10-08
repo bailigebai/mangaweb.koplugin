@@ -1,3 +1,5 @@
 /cache/
 *.log
 *.sqlite3
+/dist/
+__pycache__/
