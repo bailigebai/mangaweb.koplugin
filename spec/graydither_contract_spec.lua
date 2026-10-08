@@ -14,7 +14,7 @@ local Settings = require("mangaweb.settings")
 local fixture = require("spec.helpers.reader_ui")
 local BB = Native.BB
 
-local function setup()
+local function setup(existing_reader)
     package.loaded.pluginloader={getPluginInstance=function() return nil end}
     local adapter,reader,old_manager=fixture()
     local page=adapter.reader_widget
@@ -42,6 +42,14 @@ local function setup()
     function store:saveSetting(key,value) saved[key]=value;return true end
     function store:flush() return not self.fail_flush end
     local settings=Settings:new{store=store}
+    if existing_reader then
+        local old=settings:reader_settings()
+        for key in pairs(old) do
+            if key:match("^graydither_") then old[key]=nil end
+        end
+        old.preload_pages=4
+        saved.reader=old
+    end
     reader.settings=settings
     function reader:settings_snapshot() return settings:reader_settings() end
     G_reader_settings=Scheduler.store{graydither_enabled=true,graydither_refresh_enabled=true}
@@ -85,6 +93,28 @@ test("source and real session default off ignore global true and failed save",fu
     store.fail_flush=false
     session:getMenuItems()[1].callback()
     eq(session.preferences:isEnabled(),true);eq(settings:reader_settings().graydither_enabled,true)
+    cleanup()
+end)
+
+test("existing source preferences upgrade to explicit false and real toggles persist independently",function()
+    local adapter,reader,page,session,store,settings,paint,cleanup=setup(true)
+    local upgraded=settings:reader_settings()
+    eq(upgraded.graydither_enabled,false);eq(upgraded.graydither_refresh_enabled,false)
+    upgraded.preload_pages=5
+    assert(settings:save_reader_settings(upgraded))
+    session:getMenuItems()[1].callback()
+    eq(settings:reader_settings().graydither_enabled,true)
+    eq(settings:reader_settings().graydither_refresh_enabled,false)
+    session.refresh_preferences:setEnabled(true)
+    session:settingsChanged()
+    session:getMenuItems()[1].callback()
+    local reopened=Settings:new{store=store}:reader_settings()
+    eq(reopened.preload_pages,5)
+    eq(reopened.graydither_enabled,false);eq(reopened.graydither_refresh_enabled,true)
+    session.refresh_preferences:setEnabled(false)
+    session:settingsChanged()
+    eq(settings:reader_settings().graydither_enabled,false)
+    eq(settings:reader_settings().graydither_refresh_enabled,false)
     cleanup()
 end)
 

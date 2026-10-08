@@ -93,6 +93,33 @@ local function independent_defaults_and_persistence()
     assert(values.reader.graydither_enabled==true)
 end
 
+local function existing_reader_settings_keep_false_upgrade_defaults()
+    local settings,storage,values=storage_fixture()
+    local old=settings:reader_settings()
+    for key in pairs(old) do
+        if key:match("^graydither_") then old[key]=nil end
+    end
+    old.preload_pages=4
+    values.reader=old -- Legal persisted 0.8.83 preferences, without new fields.
+    local upgraded=settings:reader_settings()
+    assert(upgraded.graydither_enabled==false and upgraded.graydither_refresh_enabled==false,
+        "existing reader preferences must receive both explicit false defaults on upgrade")
+    upgraded.preload_pages=5
+    assert(settings:save_reader_settings(upgraded), "existing reader settings must remain saveable after upgrade")
+    local store=settings:graydither_store()
+    assert(store:saveSetting("graydither_enabled",true))
+    assert(settings:reader_settings().graydither_enabled==true
+        and settings:reader_settings().graydither_refresh_enabled==false)
+    assert(store:saveSetting("graydither_refresh_enabled",true))
+    assert(store:saveSetting("graydither_enabled",false))
+    local reopened=Settings:new{store=storage}:reader_settings()
+    assert(reopened.preload_pages==5 and reopened.graydither_enabled==false
+        and reopened.graydither_refresh_enabled==true,
+        "both switches must persist independently, including explicit false")
+    assert(store:saveSetting("graydither_refresh_enabled",false))
+    assert(values.reader.graydither_enabled==false and values.reader.graydither_refresh_enabled==false)
+end
+
 local function local_image_and_stable_screen_identity()
     local adapter,reader,manager,service=connected_fixture()
     local session=assert(service.sessions[1], "the actual reading window must create an optional image session")
@@ -227,7 +254,8 @@ local function unavailable_and_failed_services_preserve_reading()
 end
 
 local failures={}
-for _,test in ipairs({independent_defaults_and_persistence,local_image_and_stable_screen_identity,
+for _,test in ipairs({independent_defaults_and_persistence,existing_reader_settings_keep_false_upgrade_defaults,
+    local_image_and_stable_screen_identity,
     controls_loading_error_suspend_and_close,unavailable_and_failed_services_preserve_reading,
     rejected_or_stopped_session_is_not_reused,fallback_controls_cancel_and_hide_shared_body}) do
     local ok,reason=pcall(test)

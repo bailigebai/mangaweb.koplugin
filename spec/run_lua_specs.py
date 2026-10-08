@@ -6,7 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
-import sys
+import re
 
 from lupa.lua51 import LuaRuntime
 
@@ -14,17 +14,29 @@ from lupa.lua51 import LuaRuntime
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def runtime() -> LuaRuntime:
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    module_root = ROOT.as_posix()
-    lua.execute(
-        "package.path = %r .. package.path"
-        % (f"{module_root}/?.lua;{module_root}/?/init.lua;")
-    )
+def configure_source(lua: LuaRuntime, plugin_root: Path) -> LuaRuntime:
+    lua.execute("""
+        local root, helper = ...
+        package.path = root..'/?.lua;'..root..'/?/init.lua;'..package.path
+        package.preload['spec.helpers.reader_ui'] = function()
+            return assert(loadfile(helper))()
+        end
+        -- Keep explicit test preloads, then force product modules to the
+        -- selected installed tree. A missing file cannot fall back to cwd.
+        table.insert(package.loaders, 2, function(name)
+            if name:match('^mangaweb%.') then
+                return assert(loadfile(root..'/'..name:gsub('%.','/')..'.lua'))
+            end
+        end)
+    """, plugin_root.resolve().as_posix(), (ROOT / "spec/helpers/reader_ui.lua").as_posix())
     return lua
 
 
-def shared_runtime(gray_root: Path) -> LuaRuntime:
+def runtime(plugin_root: Path = ROOT) -> LuaRuntime:
+    return configure_source(LuaRuntime(unpack_returned_tuples=True), plugin_root)
+
+
+def shared_runtime(gray_root: Path, plugin_root: Path = ROOT) -> LuaRuntime:
     gray_root = gray_root.resolve()
     runner_path = gray_root / "scripts/run_tests.py"
     if not runner_path.is_file():
@@ -38,15 +50,24 @@ def shared_runtime(gray_root: Path) -> LuaRuntime:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     lua = module.runtime(plugin_root=gray_root / "graydither.koplugin")
-    lua.execute("package.path = ... .. package.path", f"{ROOT.as_posix()}/?.lua;")
-    return lua
+    return configure_source(lua, plugin_root)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("specs", nargs="*", type=Path)
     parser.add_argument("--graydither-root", type=Path, default=os.environ.get("GRAYDITHER_ROOT"))
+    parser.add_argument("--plugin-root", type=Path, default=ROOT,
+                        help="Read product modules and syntax from an unpacked plugin; specs stay here.")
     args = parser.parse_args()
+    plugin_root = args.plugin_root.resolve()
+    if not (plugin_root / "main.lua").is_file() or not (plugin_root / "_meta.lua").is_file():
+        raise SystemExit("Missing MangaWeb plugin main.lua or _meta.lua: " + str(plugin_root))
+    metadata = (plugin_root / "_meta.lua").read_text(encoding="utf-8")
+    version = re.search(r'version\s*=\s*"([^\"]+)"', metadata)
+    if version is None:
+        raise SystemExit("Missing MangaWeb version in selected plugin _meta.lua")
+    print("Product: MangaWeb " + version[1] + " from " + str(plugin_root))
     paths = args.specs
     if not paths:
         paths = sorted((ROOT / "spec").glob("*_spec.lua"))
@@ -58,14 +79,14 @@ def main() -> int:
         if path.name == "graydither_contract_spec.lua":
             if args.graydither_root is None:
                 raise SystemExit("graydither_contract_spec.lua requires --graydither-root or GRAYDITHER_ROOT.")
-            lua = shared_runtime(args.graydither_root)
+            lua = shared_runtime(args.graydither_root, plugin_root)
         else:
-            lua = runtime()
+            lua = runtime(plugin_root)
         lua.execute(path.read_text(encoding="utf-8"), name=f"@{path.as_posix()}")
         print(f"PASS {path.name}")
-    syntax = sorted(ROOT.rglob("*.lua"))
+    syntax = sorted(plugin_root.rglob("*.lua"))
     for path in syntax:
-        runtime().execute(f"assert(loadfile({str(path.as_posix())!r}))")
+        runtime(plugin_root).execute(f"assert(loadfile({str(path.as_posix())!r}))")
     print(f"Lua syntax: {len(syntax)} files passed")
     return 0
 

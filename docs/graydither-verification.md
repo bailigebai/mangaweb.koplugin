@@ -17,9 +17,12 @@
 ```text
 python spec/run_lua_specs.py
 python spec/run_lua_specs.py --graydither-root ../gray
+python spec/run_lua_specs.py --graydither-root ../gray --plugin-root /path/to/unpacked/mangaweb.koplugin
 ```
 
 第一条运行 9 个本地规格；第二条另运行真实共享核心规格，共 10 个。本地 runner 固定使用自身父目录作为源码根，不引用原开发目录。共享核心路径也可由 `GRAYDITHER_ROOT` 提供；单独选择联测规格却未提供依赖时明确报错。
+
+第三条以解包目录读取产品模块、版本及语法，测试与helper仍保留在本仓库；产品文件缺失会报错，不会回退到工作树文件。3个runner规格验证选中根、缺失模块拒绝以及helper分离。
 
 `graydither_contract_spec.lua` 使用真实 Session、真实 ImageWidget 和 BlitBuffer；仅图片解码、布局容器、时钟、窗口管理、设置保存使用可控本地替身。共享测试依赖的固定 KOReader 源码按其 `tests/fixtures/provenance.json` 校验 SHA-256；测试不执行网站请求、登录或授权。
 
@@ -31,6 +34,7 @@ python spec/run_lua_specs.py --graydither-root ../gray
 - 真实像素输入 `8, 9, 128, 246` 关闭时原样输出，开启后为 `0, 17, 136, 238`；原图片缓冲不变。更新模型本身不计数，真实成功 paint 才累计；重复 paint 不重复累计；加载后继续累计。
 - 真实全刷覆盖原生刷新与黑白闪烁；设置覆盖或正文关闭会取消待执行回调及黑层，迟到任务不会完成刷新。
 - 先写失败规格再实现：缺少默认设置/会话/菜单、服务返回拒绝未降级、独立设置窗口未暂停，均从 RED 到 GREEN。真实共享保存失败规格发现新适配器仅返回 false 会漏报；改为失败抛出错误后通过，持久值与当前开关均保持原值。
+- 独立复审发现默认值归一化的 `invalid and default or candidate` 会丢失 `false`：旧版合法阅读表缺新增字段时，两开关变为nil并使后续保存失败。源规格和真实Session联测先复现RED，改成显式分支后GREEN；验证旧表升级两项false、旧预加载仍能保存、两开关独立切换/保存及false持久化。
 
 ## 本地安装包
 
@@ -40,7 +44,9 @@ python spec/run_lua_specs.py --graydither-root ../gray
 
 打包规格先因缺少脚本失败，实现后4项通过：严格名单排除私人/开发材料、确定性构建、缺失运行文件在写入前失败、源文件或ZIP清单漂移拒绝。实际安装包检查源字节、CRC、SHA-256、ZIP完整性通过；实际重建校验值相同。
 
-包：`dist/mangaweb-0.8.84.zip`，195461字节。SHA-256：`13454b2be1e56a95c45e5ca6e9c175630067db1d93d4dc9008d178b5e0027153`。同目录另有完整文件清单与 `.zip.sha256` 校验文件。安装包未提交到Git，由当前源码可重复生成。
+修复升级默认值后重新构建包并完整解包；以解包产品运行全部40个规格通过，67个产品Lua文件语法通过，确认测试覆盖实际安装文件。源工作树全部40个规格/78个Lua语法、4个打包规格、3个runner规格重新通过；两次重建相同校验值。
+
+包：`dist/mangaweb-0.8.84.zip`，195507字节。SHA-256：`72060cc2d66623126b12193857b8dbd5c016b13e06fc46082e81570b236e0868`。同目录另有完整文件清单与 `.zip.sha256` 校验文件。安装包未提交到Git，由当前源码可重复生成；此前待验收包已由此包替换。
 
 ## 验收与边界
 

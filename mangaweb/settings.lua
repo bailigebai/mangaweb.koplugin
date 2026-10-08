@@ -95,7 +95,11 @@ local function normalize_reader(values, strict)
             elseif key == "cache_lower_mb" then
                 invalid = not is_integer(candidate) or candidate < 0 or candidate >= 2048
             end
-            normalized[key] = invalid and default or candidate
+            if invalid then
+                normalized[key] = default
+            else
+                normalized[key] = candidate
+            end
         end
     end
     if normalized.split_min_ratio > normalized.split_max_ratio then
