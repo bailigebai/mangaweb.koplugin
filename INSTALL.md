@@ -1,6 +1,8 @@
 # MangaWeb 插件安装
 
-当前本地待验收安装包：`mangaweb-0.8.84.zip`。此版本尚未发布到 GitHub。
+当前设备测试版安装包：`mangaweb-0.8.84.zip`。
+
+下载：[v0.8.84 安装包与校验文件](https://github.com/bailigebai/mangaweb.koplugin/releases/tag/v0.8.84)。
 
 ## 安装或更新
 
