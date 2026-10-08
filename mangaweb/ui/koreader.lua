@@ -7,6 +7,7 @@ local Models = require("mangaweb.models")
 local SiteRuleEditor = require("mangaweb.ui.site_rule_editor")
 local ReaderFilters = require("mangaweb.ui.reader_filters")
 local CoverPrefetch = require("mangaweb.cover_prefetch")
+local GrayDitherBridge = require("mangaweb.graydither_bridge")
 
 local Adapter = {}
 Adapter.__index = Adapter
@@ -1928,6 +1929,11 @@ function Adapter:_close_reader_controls()
     elseif current and manager and manager.close then
         pcall(manager.close, manager, current)
     end
+    local page = self.reader_widget
+    if page then
+        page.external_controls = nil
+        if page.graydither_bridge and page:_graydither_ready() then page.graydither_bridge:resume() end
+    end
     return true
 end
 
@@ -2063,6 +2069,10 @@ function Adapter:_show_reader_panel(model)
     if not controls then return false end
     self:_close_reader_controls()
     self.reader_controls = controls
+    if self.reader_widget then
+        self.reader_widget.external_controls = true
+        if self.reader_widget.graydither_bridge then self.reader_widget.graydither_bridge:pause() end
+    end
     manager:show(controls)
     return true
 end
@@ -2149,7 +2159,9 @@ function Adapter:_show_reader_controls(section)
         end)
     end
     local title, items
-    if section == "reading" then
+    if section == "graydither" then
+        title, items = "灰度与全刷", {}
+    elseif section == "reading" then
         title = "阅读翻页"
         local direction = setting("direction", "ltr")
         items = {
@@ -2215,6 +2227,7 @@ function Adapter:_show_reader_controls(section)
             item("宽图拆分", function() return show_section("split") end),
             item("漫画去灰增强", function() return show_section("gray") end),
             item("亮度与对比度", function() return show_section("tone") end),
+            item("灰度与全刷", function() return self:_show_graydither_controls() end),
             item("跳转图片", show_picker),
             item("重试当前页", function()
                 close_controls()
@@ -2240,12 +2253,27 @@ function Adapter:_show_reader_controls(section)
     }
     local model = {
         modal = true, title = title, rows = rows_from(items), navigation = navigation,
-        status = section == "preload" and "提前下载后续图片，完成后翻页直接读取缓存。默认3页。" or nil,
+        status = section == "preload" and "提前下载后续图片，完成后翻页直接读取缓存。默认3页。"
+            or section == "graydither" and "需要安装并启用兼容版本的灰度插件；共享服务当前不可用。" or nil,
         on_back = section == "root" and close_controls
             or function() return show_section("root") end,
         on_close = close_controls,
     }
     return self:_show_reader_panel(model)
+end
+
+function Adapter:_show_graydither_controls()
+    local page = self.reader_widget
+    local bridge = page and page.graydither_bridge
+    if bridge and bridge:isAvailable() then
+        self:_close_reader_controls()
+        if bridge:showMenu(function()
+            if self.reader_widget == page and not page.released then
+                self:_close_reader_controls()
+            end
+        end) then return true end
+    end
+    return self:_show_reader_controls("graydither")
 end
 
 function Adapter:_turn_from_edge(edge)
@@ -2264,15 +2292,7 @@ function Adapter:_show_page_picker(selected)
     local value = math.max(1, math.min(total,
         math.floor(tonumber(selected or reader:current_page()) or 1)))
     local function close_picker()
-        local current = self.reader_controls
-        self.reader_controls = nil
-        if current and self.reader_widget
-            and current == self.reader_widget.embedded_controls then
-            self.reader_widget:close_controls()
-        elseif current and manager.close then
-            pcall(manager.close, manager, current)
-        end
-        return true
+        return self:_close_reader_controls()
     end
     local function step(delta)
         if not (self.reader_widget and self.reader_widget.embedded_controls) then
@@ -2330,6 +2350,10 @@ function Adapter:_show_page_picker(selected)
     if not picker then return false end
     close_picker()
     self.reader_controls = picker
+    if self.reader_widget then
+        self.reader_widget.external_controls = true
+        if self.reader_widget.graydither_bridge then self.reader_widget.graydither_bridge:pause() end
+    end
     manager:show(picker)
     return true
 end
@@ -2380,6 +2404,13 @@ function Adapter:_new_reader_renderer()
         geom = self.geom, screen = self.screen, ui_manager = self.ui_manager,
         font = self.font, blitbuffer = self.blitbuffer, device = self.device,
         rect_span = self.rect_span,
+        create_graydither_bridge = function(page)
+            return GrayDitherBridge:new{
+                owner = page, settings = self.reader and self.reader.settings,
+                is_ready = function() return page:_graydither_ready() end,
+                redraw = function() if not page.released then page:_dirty() end end,
+            }
+        end,
     }
 end
 

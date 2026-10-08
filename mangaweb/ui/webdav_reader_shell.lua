@@ -83,6 +83,29 @@ function NativeReader:show(model)
         end
     end
 
+    function Page:_graydither_ready()
+        return not self.released and not self.suspended and not self.loading
+            and not self.error and not self.embedded_controls and not self.external_controls and self.image ~= nil
+    end
+
+    function Page:_attach_graydither()
+        if not self.graydither_bridge and dependencies.create_graydither_bridge then
+            local ok, bridge = pcall(dependencies.create_graydither_bridge, self)
+            if ok then self.graydither_bridge = bridge end
+        end
+        local bridge = self.graydither_bridge
+        if bridge and self.image then
+            -- Session ownership scopes this non-sensitive token. Image paths and
+            -- download URLs never enter the shared service's page identity.
+            local token = table.concat({tostring(self.index), self.segment or "whole",
+                tostring(self.pan_y or 0), self.fit_mode or "page", tostring(self.split_cut_percent or 50)}, ":")
+            bridge:attachImage(self.image, token)
+            if self:_graydither_ready() then bridge:resume()
+            elseif self.embedded_controls or self.external_controls or self.suspended then bridge:pause()
+            else bridge:pause(true) end
+        end
+    end
+
     function Page:paintTo(bb, x, y)
         if self.released or not self[1] then return end
         local paint = dependencies.input_container and dependencies.input_container.paintTo
@@ -251,6 +274,7 @@ function NativeReader:show(model)
         self:_dispose_embedded_controls()
         self:_release_controls()
         self.embedded_controls = panel
+        if self.graydither_bridge then self.graydither_bridge:pause() end
         -- InputContainer still receives unhandled gestures while the panel is
         -- open and iterates this table. Disable page gestures without breaking
         -- the native input contract; close_controls restores page_gestures.
@@ -278,6 +302,7 @@ function NativeReader:show(model)
         self:_dispose_embedded_controls()
         self.ges_events = self.page_gestures
         self:_rebuild_surface()
+        if self.graydither_bridge and self:_graydither_ready() then self.graydither_bridge:resume() end
         self:_dirty()
         return true
     end
@@ -348,6 +373,7 @@ function NativeReader:show(model)
         self.processing_error = options.processing_error
         self.split_cut_percent = options.split_cut_percent
         self:_rebuild_surface()
+        self:_attach_graydither()
         self:_dirty()
         if previous and type(previous.free) == "function" then pcall(previous.free, previous) end
         return true
@@ -362,6 +388,7 @@ function NativeReader:show(model)
             self.index = math.floor(clamp(index, 1, self.total))
         end
         self.loading = loading == true
+        if self.loading and self.graydither_bridge then self.graydither_bridge:pause(true) end
         self.download_bytes, self.download_total = nil, nil
         self:_rebuild_surface()
         self:_dirty()
@@ -452,6 +479,7 @@ function NativeReader:show(model)
     end
 
     function Page:set_error(error)
+        if self.graydither_bridge then self.graydither_bridge:pause(true) end
         self.error = error or { code = "image_error" }
         self.loading = false
         self.download_bytes, self.download_total = nil, nil
@@ -464,12 +492,28 @@ function NativeReader:show(model)
     function Page:release()
         if self.released then return true end
         self.released = true
+        if self.graydither_bridge then self.graydither_bridge:close() end
         self:_dispose_embedded_controls()
         self:_release_controls()
         if self.image and type(self.image.free) == "function" then pcall(self.image.free, self.image) end
         return true
     end
     function Page:onCloseWidget() return self:release() end
+
+    function Page:onSuspend()
+        self.suspended = true
+        if self.graydither_bridge then self.graydither_bridge:pause() end
+    end
+    function Page:onRequestSuspend() return self:onSuspend() end
+    function Page:onResume()
+        self.suspended = false
+        if self.graydither_bridge and self:_graydither_ready() then self.graydither_bridge:resume() end
+    end
+    function Page:onSetDimensions()
+        if self.graydither_bridge then self.graydither_bridge:reset() end
+    end
+    function Page:onSetRotationMode() return self:onSetDimensions() end
+    function Page:onScreenResize() return self:onSetDimensions() end
 
     local page = Page:new{
         file = model.path,
@@ -517,6 +561,7 @@ function NativeReader:show(model)
         }
     end
     page:_rebuild_surface()
+    if page.image then page:_attach_graydither() end
     self.page = page
     return page
 end

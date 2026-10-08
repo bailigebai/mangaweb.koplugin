@@ -10,6 +10,9 @@ local READER_DEFAULTS = {
     tone_enabled = false, tone_preset = "original",
     gray_custom_presets = {}, tone_custom_presets = {},
     cache_upper_mb = 256, cache_lower_mb = 192,
+    graydither_enabled = false, graydither_refresh_enabled = false,
+    graydither_refresh_interval = 5, graydither_refresh_mode = "native",
+    graydither_refresh_hold = 0.30,
 }
 
 local function is_integer(value)
@@ -55,6 +58,17 @@ local function invalid_reader_field(values)
         or values.cache_upper_mb > 2048 then return "invalid_cache_upper_mb" end
     if not is_integer(values.cache_lower_mb) or values.cache_lower_mb < 0
         or values.cache_lower_mb >= values.cache_upper_mb then return "invalid_cache_lower_mb" end
+    if type(values.graydither_enabled) ~= "boolean" then return "invalid_graydither_enabled" end
+    if type(values.graydither_refresh_enabled) ~= "boolean" then return "invalid_graydither_refresh_enabled" end
+    if not is_integer(values.graydither_refresh_interval) or values.graydither_refresh_interval < 1
+        or values.graydither_refresh_interval > 50 then return "invalid_graydither_refresh_interval" end
+    if not one_of(values.graydither_refresh_mode, { native = true, flash = true }) then
+        return "invalid_graydither_refresh_mode"
+    end
+    if type(values.graydither_refresh_hold) ~= "number" or values.graydither_refresh_hold ~= values.graydither_refresh_hold
+        or values.graydither_refresh_hold < 0.10 or values.graydither_refresh_hold > 1.00 then
+        return "invalid_graydither_refresh_hold"
+    end
 end
 
 local function normalize_reader(values, strict)
@@ -156,6 +170,36 @@ function Settings:save_reader_settings(values)
     pcall(self.store.saveSetting, self.store, "reader", previous)
     pcall(self.flush, self)
     return false, "settings_flush_failed"
+end
+
+-- The shared plugin sees only this reader's preferences. Reuse the existing
+-- validated save/flush/rollback path without reprocessing downloaded images.
+function Settings:graydither_store()
+    local settings = self
+    local function supported(key)
+        return type(key) == "string" and key:match("^graydither_")
+            and READER_DEFAULTS[key] ~= nil
+    end
+    local store = {}
+    function store:readSetting(key, fallback)
+        if not supported(key) then return fallback end
+        return settings:reader_settings()[key]
+    end
+    function store:saveSetting(key, value)
+        assert(supported(key), "invalid_graydither_setting")
+        local values = settings:reader_settings()
+        values[key] = value
+        local saved, reason = settings:save_reader_settings(values)
+        -- The shared preferences use the host LuaSettings convention: failed
+        -- persistence throws, while nil or true may denote a successful write.
+        if not saved then error(reason or "settings_save_failed") end
+        return true
+    end
+    function store:delSetting(key)
+        assert(supported(key), "invalid_graydither_setting")
+        return self:saveSetting(key, READER_DEFAULTS[key])
+    end
+    return store
 end
 
 return Settings
