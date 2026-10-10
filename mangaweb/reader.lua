@@ -40,6 +40,9 @@ function Reader:new(options)
         loader = options.loader,
         page_cache = options.page_cache or (options.loader and options.loader.page_cache),
         settings = options.settings,
+        panel_preferences = options.panel_preferences or (options.settings
+            and type(options.settings.read)=='function'
+            and require('mangaweb.panel_settings'):new{settings=options.settings}),
         logger = options.logger,
         scheduler = options.scheduler or (options.ui and (options.ui.ui_manager or options.ui)),
         timeout_seconds = tonumber(options.timeout_seconds) or 25,

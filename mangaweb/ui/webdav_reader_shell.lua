@@ -72,6 +72,7 @@ function NativeReader:show(model)
     end
 
     function Page:_turn(edge)
+        if self.embedded_controls or self.panel_info and (self.loading or self.error) then return true end
         local forward = edge == "right"
         if self.panel_info and self.panel_info.navigation=='vertical' then
             forward=edge=='bottom'

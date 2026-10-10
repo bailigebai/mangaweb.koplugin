@@ -15,6 +15,10 @@ function Panels:values()
     if self.preferences then return self.preferences() end
     return self.reader:panel_settings_snapshot()
 end
+function Panels:_direction(config)
+    return config.order=='follow' and (self.reader.reader_settings.direction=='rtl' and 'manga' or 'normal')
+        or config.order
+end
 
 function Panels:_detach()
     if type(self.ui.detach_panel)~='function' then return true end
@@ -64,17 +68,17 @@ function Panels:enter(desired)
     end
     self.session=Session:new{source=self.source,detector=self.detector,schedule=schedule,
         screen_width=context.width,screen_height=context.height}
-    local direction=config.order=='follow' and (self.reader.reader_settings.direction=='rtl' and 'manga' or 'normal')
-        or config.order
+    local direction=self:_direction(config)
     return self.session:start({generation=generation,page_path=context.raw_path,page_buffer=context.buffer,
         engine='default',direction=direction,desired=desired or 'first',view=config.view,
         rotation=config.rotation,show_adjacent=config.show_adjacent,margin_percent=config.margin_percent}, {
         on_panel=function(buffer,panel,index,count,render)
             if not valid() or not self.ui.show_panel then return false end
+            local current=self:values()
             return self.ui:show_panel(buffer,{page_index=entry.index,total=#self.reader.context.pages,
                 panel_id=panel.id,index=index,count=count,view=render.view or 'context',
                 rotation=render.rotation,zoom=render.zoom,pan_x=render.pan_x,pan_y=render.pan_y,
-                navigation=config.navigation,reverse_navigation=config.reverse_navigation})==true
+                navigation=current.navigation,reverse_navigation=current.reverse_navigation})==true
         end,
         on_boundary=function(delta) if valid() then self:_boundary(delta) end end,
         on_fallback=function()
@@ -119,7 +123,20 @@ function Panels:configure(values,commit,rollback)
         if commit then return commit() end
         return false,'panel_inactive'
     end
-    return self.session:configure(values,commit,rollback)
+    local session=self.session
+    local previous_direction=session.direction
+    local accepted,reason=session:configure(values,commit,rollback)
+    if accepted and values.order then
+        local current=session:set_direction(self:_direction(self:values()))
+        if current and session.callbacks.on_panel(current.buffer,current.panel,current.index,current.count,session.render_options) then
+            return true
+        end
+        if rollback then rollback() end
+        current=session:set_direction(previous_direction)
+        if current then session.callbacks.on_panel(current.buffer,current.panel,current.index,current.count,session.render_options) end
+        return false,'panel_settings_failed'
+    end
+    return accepted,reason
 end
 function Panels:pan(dx,dy) return self.session and self.session:pan(dx,dy) or false end
 function Panels:zoom(factor) return self.session and self.session:zoom(factor) or false end

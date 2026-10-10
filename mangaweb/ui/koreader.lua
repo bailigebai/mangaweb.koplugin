@@ -2088,6 +2088,12 @@ function Adapter:_show_reader_controls(section)
     local manager, reader = self.ui_manager, self.reader
     if not manager or not reader then return false end
     section = section or "root"
+    if section=='panels' then
+        if not self.reader_panels or self.reader_panels.reader~=reader or self.reader_panels.page~=self.reader_widget then
+            self.reader_panels=require('mangaweb.ui.reader_panels'):new{adapter=self,reader=reader}
+        end
+        return self.reader_panels:show()
+    end
     if section == "graydither" or section == "refresh"
         or section == "refresh_interval" or section == "refresh_hold" then
         if not self.reader_refresh or self.reader_refresh.reader ~= reader
@@ -2238,6 +2244,7 @@ function Adapter:_show_reader_controls(section)
             item("阅读预加载", function() return show_section("preload") end),
             item("图片显示", function() return show_section("display") end),
             item("宽图拆分", function() return show_section("split") end),
+            item("智能分格", function() return show_section("panels") end),
             item("漫画去灰增强", function() return show_section("gray") end),
             item("亮度与对比度", function() return show_section("tone") end),
             item("灰度与全刷", function() return self:_show_graydither_controls() end),
@@ -2514,6 +2521,7 @@ end
 function Adapter:restore_panel_page() return self:detach_panel() end
 
 function Adapter:close_reader(reason)
+    self.reader_panels=nil
     self.reader_refresh = nil
     if self.reader_filters then self.reader_filters:close(); self.reader_filters=nil end
     local manager = self.ui_manager

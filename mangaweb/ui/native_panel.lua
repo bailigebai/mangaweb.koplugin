@@ -68,6 +68,9 @@ function NativePanel:show(model)
                 text = tostring(item.text or ""), width = command_width, height = compact_h,
                 enabled = item.enabled ~= false, show_parent = self,
                 callback = function() return action(item.callback, model.on_action_error) end,
+                hold_callback = item.hold_callback and function()
+                    return action(item.hold_callback,model.on_action_error)
+                end or nil,
             }
         end
         local function command_row(items)
