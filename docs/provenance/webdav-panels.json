@@ -1,0 +1,48 @@
+{
+  "source": "bailigebai/webdavmanga.koplugin",
+  "version": "0.4.21",
+  "commit": "567002ce1d53e45f35020c849125fe7ef0fd2f20",
+  "transformation": "webdavmanga.panel_ -> mangaweb.panel_ only",
+  "files": [
+    {
+      "file": "mangaweb/panel_analysis.lua",
+      "source_sha256": "680a7ec9ec4e244e5fd3e2110c30bbba0102a663acca8dedc2b457a13b0c5ed9",
+      "copy_sha256": "7cab303c23c118c5c67941649d0cfe73322d773c1de4b57c0cdc34371ff5aa8b"
+    },
+    {
+      "file": "mangaweb/panel_arrays.lua",
+      "source_sha256": "511aacc1c6818a6d34f2d07aa3197f85518a28d849b3005f4165edfa78b75547",
+      "copy_sha256": "511aacc1c6818a6d34f2d07aa3197f85518a28d849b3005f4165edfa78b75547"
+    },
+    {
+      "file": "mangaweb/panel_components.lua",
+      "source_sha256": "de6f5d82615a36bc112bfd8bd7d0d1080aa8fe6eb9a5c3fa298636cbf3d06b0b",
+      "copy_sha256": "004643f20775d6bacc54591d293cfdcf5d79437dca119a3497b86c46fb3e0142"
+    },
+    {
+      "file": "mangaweb/panel_detector.lua",
+      "source_sha256": "939738975537c5126d29200e55c8073f59510bd7cd49ce33477e0a0cbe3b2804",
+      "copy_sha256": "27338508d0f0350d9073e557600ecc30428571902ec1de97edfd5d137c372392"
+    },
+    {
+      "file": "mangaweb/panel_geometry.lua",
+      "source_sha256": "24388df6506f00300705dc2c62af6b325c0376bd4595ed4920c30a06c7ed8685",
+      "copy_sha256": "24388df6506f00300705dc2c62af6b325c0376bd4595ed4920c30a06c7ed8685"
+    },
+    {
+      "file": "mangaweb/panel_session.lua",
+      "source_sha256": "ac35b08216d08d34d3d2dd740754daf5681603d453fa2a6fa3c5b9cc63543ccc",
+      "copy_sha256": "ac35b08216d08d34d3d2dd740754daf5681603d453fa2a6fa3c5b9cc63543ccc"
+    },
+    {
+      "file": "mangaweb/panel_source.lua",
+      "source_sha256": "55663a57633e5f308da3d945211f360d3d4db14ede4dd6a23650a84e4e6fc099",
+      "copy_sha256": "a825410bfc8e44d37c7e94ddbd84db2c294475b65e93d4d4bd8519489fb29407"
+    },
+    {
+      "file": "mangaweb/panel_view.lua",
+      "source_sha256": "d8c3b316d91e82bb731bf239683bf58fb4e547ce22d08323580faa933de4ebcf",
+      "copy_sha256": "d8c3b316d91e82bb731bf239683bf58fb4e547ce22d08323580faa933de4ebcf"
+    }
+  ]
+}

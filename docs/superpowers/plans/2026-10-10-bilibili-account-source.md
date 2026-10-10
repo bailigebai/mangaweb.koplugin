@@ -39,7 +39,7 @@
 
 每项要求明确 `PASS` 和 Lua 语法通过。外部访问与脱敏响应材料留在仓库外；测试中只使用虚构凭据、最小结构和必要的字段样例。
 
-## T1：验证官方协议与 API 请求边界
+## Task 1：验证官方协议与 API 请求边界
 
 **Files:** Create `mangaweb/bilibili_api.lua`；Test `spec/bilibili_api_spec.lua`；Create `docs/bilibili-protocol-2026-10-10.md` 及最小脱敏 `spec/fixtures/bilibili/*.json`。
 
@@ -54,7 +54,7 @@
 - [ ] Run 新规格。账号接口或漫画接口仍不可访问时保留明确的失败证据，继续独立模块测试；T5/T6的完整读取验收不能用伪造成功响应代替。
 - [ ] 提交：`feat: add verified Bilibili API request boundaries`。
 
-## T2：账号会话、Cookie与主机隔离
+## Task 2：账号会话、Cookie与主机隔离
 
 **Files:** Create `mangaweb/bilibili_session.lua`；Test `spec/bilibili_session_spec.lua`。复用 `mangaweb/settings.lua` 的底层存储接口；不放宽通用 `auth.lua`。
 
@@ -69,7 +69,7 @@
 - [ ] Run 规格及既有 `site_settings_domain_spec.lua`，确认Zero的凭据边界保持原样。
 - [ ] 提交：`feat: isolate and persist Bilibili account sessions`。
 
-## T3：扫码状态机与账号操作
+## Task 3：扫码状态机与账号操作
 
 **Files:** Create `mangaweb/bilibili_auth.lua`；Test `spec/bilibili_auth_spec.lua`。
 
@@ -84,7 +84,7 @@
 - [ ] Run 规格，要求一次操作最多一次完成回调、关闭后零持久化写入。
 - [ ] 提交：`feat: manage cancellable QR login and account switching`。
 
-## T4：扫码与账号界面
+## Task 4：扫码与账号界面
 
 **Files:** Create `mangaweb/ui/bilibili_account.lua`；Modify `mangaweb/ui/koreader.lua`、`ui/settings.lua`、`ui/site_center.lua` 的Bilibili账号入口；Test `spec/bilibili_account_ui_spec.lua`。
 
@@ -98,7 +98,7 @@
 - [ ] Run 新规格及既有站点中心/设置规格。实际登录需用户在手机确认，桌面mock不得当作已登录实机证明。
 - [ ] 提交：`feat: add local QR login and account management screens`。
 
-## T5：默认站点、列表与详情
+## Task 5：默认站点、列表与详情
 
 **Files:** Create `mangaweb/sources/bilibili.lua`；Modify `mangaweb/app.lua`、`source_registry.lua`、`models.lua`；Test `spec/bilibili_source_spec.lua`、Modify `spec/app_sources_spec.lua`。
 
@@ -112,7 +112,7 @@
 - [ ] Run 新规格及 `app_sources_spec/site_definitions_spec/site_center_custom_spec`，并实际检查列表→详情。T1未取得可访问漫画接口时，本项真实接入验收仍未完成，禁止标记可用。
 - [ ] 提交：`feat: integrate Bilibili catalogue as a built-in source`。
 
-## T6：章节图片、缓存与完整验收
+## Task 6：章节图片、缓存与完整验收
 
 **Files:** 新增源的 `:resolve_image(image,callbacks)`；仅必要时Modify `mangaweb/reader.lua`、`image_loader.lua`、`image_identity.lua` 的可选provider接入；Test `spec/bilibili_reading_spec.lua`；Modify `_meta.lua/README.md/INSTALL.md` 及 `scripts/build_package.py` 的明确产品清单；Create `docs/bilibili-acceptance-2026-10-10.md`。
 

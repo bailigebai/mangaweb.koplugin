@@ -39,7 +39,7 @@
 
 规格执行器支持明确文件名。成功必须输出该规格的 `PASS`，并通过产品 Lua 语法检查。复制原项目尚未跟踪的必要规格和运行器到工作区时，保留来源记录，不能从其他目录隐式加载产品模块。
 
-## T1：复制核心与来源契约
+## Task 1：复制核心与来源契约
 
 **Files:** Create `mangaweb/panel_{analysis,arrays,components,detector,geometry,session,source,view}.lua`；Create `docs/provenance/webdav-panels.json`；Modify `NOTICE`；Test `spec/panel_copy_spec.lua`、`spec/panel_detector_spec.lua`、`spec/panel_session_spec.lua`、`spec/panel_memory_spec.lua`。
 
@@ -52,7 +52,7 @@
 - [ ] Run 四项核心规格，要求无 WebDAVManga 运行时加载，几何、保护框、取消和缓冲上限断言通过。
 - [ ] 只提交本任务文件：`feat: copy standalone panel core into MangaWeb`。
 
-## T2：原图裁切与滤镜适配
+## Task 2：原图裁切与滤镜适配
 
 **Files:** Create `mangaweb/panel_rendering.lua`；Test `spec/panel_rendering_spec.lua`、`spec/verify_panel_native.py`。复用 `gray_enhance.lua`、`tone_adjust.lua`，不另写滤镜算法。
 
@@ -66,7 +66,7 @@
 - [ ] Run 规格；通过已有本机 BlitBuffer 测试环境检查分格尺寸及实际 LUT 像素结果，脚本缺少原生运行环境时明确失败/未验证，不以空跑代替。
 - [ ] 提交：`feat: render panels from cached originals with existing filters`。
 
-## T3：阅读会话、跨页与退出
+## Task 3：阅读会话、跨页与退出
 
 **Files:** Create `mangaweb/reader_panels.lua`；Modify `mangaweb/reader.lua` 的 `_display/_move/update_settings/go_to/close` 接入点；Test `spec/reader_panels_spec.lua`。
 
@@ -83,7 +83,7 @@
 - [ ] Run 本项及 `reader_loading_spec/reader_preload_spec`，要求原页预加载数量和普通阅读保持原语义。
 - [ ] 提交：`feat: integrate cancellable panel sessions with page navigation`。
 
-## T4：原生画面、手势与灰度刷新
+## Task 4：原生画面、手势与灰度刷新
 
 **Files:** Modify `mangaweb/ui/webdav_reader_shell.lua`、`mangaweb/ui/koreader.lua` 的阅读适配点；Test `spec/native_panel_reader_spec.lua`、`spec/graydither_contract_spec.lua`。
 
@@ -98,7 +98,7 @@
 - [ ] Run 原生规格及共享灰度契约：`spec/run_lua_specs.py --graydither-root 'E:\jiankong\graydither.koplugin' spec/graydither_contract_spec.lua`。
 - [ ] 提交：`feat: add panel gestures and safe native rendering`。
 
-## T5：本漫画设置、默认设置与同层控制
+## Task 5：本漫画设置、默认设置与同层控制
 
 **Files:** Create `mangaweb/panel_settings.lua`、`mangaweb/ui/reader_panels.lua`；Modify `mangaweb/ui/koreader.lua` 的控制入口；Test `spec/panel_settings_spec.lua`、`spec/panel_controls_spec.lua`。利用现有 `Settings.store/read/write/flush`，不改变其他阅读配置格式。
 
@@ -113,7 +113,7 @@
 - [ ] Run 新规格及 `reader_controls_spec/reader_refresh_spec`。
 - [ ] 提交：`feat: manage per-comic panel preferences in reader controls`。
 
-## T6：完整检查、安装包与实机验收
+## Task 6：完整检查、安装包与实机验收
 
 **Files:** Modify `scripts/build_package.py` 的明确产品清单；Modify `_meta.lua/README.md/INSTALL.md`；Create `docs/panel-copy-acceptance-2026-10-10.md`。
 

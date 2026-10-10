@@ -1,1 +1,31 @@
-本插件为独立实现，仅参考 KOReader 公共接口、Moon 的生命周期设计和 Yealico 的封面优先交互思路，未复制 Moon 运行时代码。图片阅读界面的全屏输入与关闭模型派生自 WebDAV Manga v0.4.03 的 ui_reader_shell.lua，并裁剪为 MangaWeb 命名空间下的图片路径实现；未包含 WebDAV、OPDS、文档、压缩包、离线缓存、智能分格或裁边代码。站点内容与图片版权归各站点及其权利人所有。插件不绕过安全验证，不修改远端收藏，不提供整本离线缓存。
+MangaWeb uses KOReader public interfaces. The full-screen reader input and close model derives from WebDAVManga ui_reader_shell.lua. The standalone panel core is copied from WebDAVManga v0.4.21 (567002ce1d53e45f35020c849125fe7ef0fd2f20); only its internal module namespace is changed. File provenance is recorded in docs/provenance/webdav-panels.json. Site content and image copyrights belong to their respective owners.
+
+Panel component detection and geometry contain adapted code from PanelsPlus,
+revision 14c53e9daec5a34e627dddb3bd52483ddb787bad:
+https://github.com/KristanLaimon/PanelsPlus
+Changes: bounded host/native arrays, fitted ordering frames separated from
+protected display bounds, deterministic ties, plugin-owned coverage checks.
+The MIT License for these portions follows:
+
+MIT License
+
+Copyright (c) 2026 KristanLaimon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
