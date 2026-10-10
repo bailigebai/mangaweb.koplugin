@@ -82,8 +82,15 @@ function Rendering:open(generation,request,callbacks)
         if callbacks.on_error then callbacks.on_error(reason or 'panel_invalid_dimensions') end
         return {cancel=function() end}
     end
+    -- The copied Source can internally fall back to page_buffer after a native
+    -- draw failure while its kind remains "mupdf". Keep the processed screen
+    -- image out of that boundary: a failed original must restore the whole page.
+    local source_request={}
+    for key,value in pairs(request) do
+        if key~='page_buffer' then source_request[key]=value end
+    end
     local wrapped,cancelled
-    local operation=self.source:open(generation,request,{
+    local operation=self.source:open(generation,source_request,{
         on_ready=function(raw)
             if cancelled then raw:close();return end
             wrapped=setmetatable({raw=raw,lut=lut,applier=self.applier,budget=math.floor(w*h*1.5)},Handle)

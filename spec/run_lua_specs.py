@@ -86,7 +86,10 @@ def main() -> int:
             lua = runtime(plugin_root)
         lua.execute(path.read_text(encoding="utf-8"), name=f"@{path.as_posix()}")
         print(f"PASS {path.name}")
-    syntax = sorted(plugin_root.rglob("*.lua"))
+    # Only product Lua participates in the syntax gate. Scratch readbacks and
+    # spec fixtures can contain other versions and must not inflate this count.
+    syntax = sorted([plugin_root / "main.lua", plugin_root / "_meta.lua"]
+                    + list((plugin_root / "mangaweb").rglob("*.lua")))
     for path in syntax:
         runtime(plugin_root).execute(f"assert(loadfile({str(path.as_posix())!r}))")
     print(f"Lua syntax: {len(syntax)} files passed")
