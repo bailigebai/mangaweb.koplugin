@@ -4,6 +4,22 @@ local FileSink = {}
 local MAX_BYTES = 64 * 1048576
 local BLOCK_BYTES = 64 * 1024
 
+-- Never send backend error strings (which may contain private URLs) through
+-- IPC/logging. Preserve only the failure category needed for device diagnosis.
+local function failure_cause(value)
+    local message = tostring(value or ""):lower()
+    if message:find("timeout", 1, true) or message:find("timed out", 1, true) then return "timeout" end
+    if message:find("host not found", 1, true) or message:find("not known", 1, true)
+        or message:find("name resolution", 1, true) or message:find("getaddrinfo", 1, true) then
+        return "dns_error"
+    end
+    if message:find("ssl", 1, true) or message:find("tls", 1, true)
+        or message:find("certificate", 1, true) then return "tls_error" end
+    if message:find("closed", 1, true) or message:find("reset", 1, true)
+        or message:find("refused", 1, true) then return "connection_closed" end
+    return "transport_failure"
+end
+
 local function status_number(value)
     if type(value) == "table" then
         return status_number(value.status or value.status_code or value.code)
@@ -67,10 +83,11 @@ function FileSink.download(request, part_path, deps)
         if not opened or not file then
             return { headers = {}, bytes = 0, error = "storage_error" }
         end
-        local bytes, saw_chunk, sink_error = 0, false, nil
+        local bytes, saw_chunk, sink_error, sink_cause = 0, false, nil, nil
         local function sink(chunk, error_value)
             if error_value then
                 sink_error = "transport_error"
+                sink_cause = failure_cause(error_value)
                 return nil, sink_error
             end
             if chunk == nil then return 1 end
@@ -117,11 +134,11 @@ function FileSink.download(request, part_path, deps)
         local filtered = safe_headers(response_headers)
         if sink_error or not closed then
             return { status = response_code, headers = filtered, bytes = bytes,
-                error = sink_error or "storage_error" }
+                error = sink_error or "storage_error", cause = sink_cause }
         end
         if not ok or result == nil or not response_code then
             return { status = response_code, headers = filtered, bytes = bytes,
-                error = "transport_error" }
+                error = "transport_error", cause = failure_cause(not ok and result or code) }
         end
         if response_code >= 300 and response_code < 400 then
             local accepted, redirected = pcall(deps.redirect_request or function() end,

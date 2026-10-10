@@ -367,6 +367,8 @@ function ImageLoader:_process_impl(job)
             if ok and type(value) == "table" and type(value.metadata) == "table" then
                 return self:_ready(job, output, value.metadata)
             end
+            self:_log(job, "process_failed", type(value) == "table"
+                and value.processing_error or "image_processing_failed")
             self.temp_files:remove(output)
             job.output = nil
             -- The reader scales this raw path with its normal page fit policy.
@@ -384,8 +386,8 @@ function ImageLoader:_process_impl(job)
             return done(false)
         end
         local launched, operation = pcall(self.async.run, function()
-            local metadata = self.page_processor.process(raw.path, output, job.profile)
-            return { metadata = metadata }
+            local metadata, processing_error = self.page_processor.process(raw.path, output, job.profile)
+            return { metadata = metadata, processing_error = processing_error }
         end, done, { on_reaped = reaped })
         launching = false
         if not launched then return done(false) end

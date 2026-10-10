@@ -480,6 +480,15 @@ function Reader:update_settings(changes)
     local saved, reason = self.settings:save_reader_settings(values)
     if not saved then return false, reason end
     self.reader_settings = self.settings:reader_settings()
+    -- Final drawing and screen refresh do not change downloaded images or
+    -- filter processing. The settings panel notifies the shared image session.
+    local drawing_only = next(changes or {}) ~= nil
+    for key in pairs(changes or {}) do
+        if key ~= "graydither_enabled" and key ~= "graydither_refresh_enabled"
+            and key ~= "graydither_refresh_interval" and key ~= "graydither_refresh_mode"
+            and key ~= "graydither_refresh_hold" then drawing_only = false end
+    end
+    if drawing_only then return true end
     if changes and (changes.cache_upper_mb ~= nil or changes.cache_lower_mb ~= nil) then
         self:_configure_cache()
     end

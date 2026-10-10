@@ -36,7 +36,7 @@ def runtime(plugin_root: Path = ROOT) -> LuaRuntime:
     return configure_source(LuaRuntime(unpack_returned_tuples=True), plugin_root)
 
 
-def shared_runtime(gray_root: Path, plugin_root: Path = ROOT) -> LuaRuntime:
+def shared_runtime(gray_root: Path, plugin_root: Path = ROOT, gray_plugin_root: Path | None = None) -> LuaRuntime:
     gray_root = gray_root.resolve()
     runner_path = gray_root / "scripts/run_tests.py"
     if not runner_path.is_file():
@@ -49,7 +49,7 @@ def shared_runtime(gray_root: Path, plugin_root: Path = ROOT) -> LuaRuntime:
     spec = importlib.util.spec_from_file_location("graydither_test_runtime", runner_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    lua = module.runtime(plugin_root=gray_root / "graydither.koplugin")
+    lua = module.runtime(plugin_root=gray_plugin_root or gray_root / "graydither.koplugin")
     return configure_source(lua, plugin_root)
 
 
@@ -57,6 +57,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("specs", nargs="*", type=Path)
     parser.add_argument("--graydither-root", type=Path, default=os.environ.get("GRAYDITHER_ROOT"))
+    parser.add_argument("--graydither-plugin-root", type=Path,
+                        help="Use an unpacked GrayDither release with the hash-pinned test fixtures.")
     parser.add_argument("--plugin-root", type=Path, default=ROOT,
                         help="Read product modules and syntax from an unpacked plugin; specs stay here.")
     args = parser.parse_args()
@@ -79,7 +81,7 @@ def main() -> int:
         if path.name == "graydither_contract_spec.lua":
             if args.graydither_root is None:
                 raise SystemExit("graydither_contract_spec.lua requires --graydither-root or GRAYDITHER_ROOT.")
-            lua = shared_runtime(args.graydither_root, plugin_root)
+            lua = shared_runtime(args.graydither_root, plugin_root, args.graydither_plugin_root)
         else:
             lua = runtime(plugin_root)
         lua.execute(path.read_text(encoding="utf-8"), name=f"@{path.as_posix()}")

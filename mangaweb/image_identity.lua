@@ -33,4 +33,14 @@ function Identity.page(spec, headers, sha256)
         index = spec.index, url = spec.url }
 end
 
+-- A cover is independent of the selected chapter and display size. Keep its
+-- bounded original separate from reader pages, while thumbnails retain their
+-- existing per-size identities.
+function Identity.cover(spec, headers, sha256)
+    local scope = Identity.scope(headers or spec.headers, sha256)
+    if not scope then return nil end
+    return { site_id = spec.site_id, comic_id = spec.comic_id,
+        chapter_id = "cover-original-v1:" .. scope, index = 1, url = spec.url }
+end
+
 return Identity

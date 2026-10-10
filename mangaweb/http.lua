@@ -56,7 +56,7 @@ function Http:_callback(request, name, ...)
         if type(self.logger) == "function" then
             pcall(self.logger, entry)
         elseif type(self.logger.warn) == "function" then
-            pcall(self.logger.warn, self.logger, entry)
+            pcall(self.logger.warn, entry)
         end
     end
     return ok

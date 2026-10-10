@@ -8,6 +8,7 @@ local SiteRuleEditor = require("mangaweb.ui.site_rule_editor")
 local ReaderFilters = require("mangaweb.ui.reader_filters")
 local CoverPrefetch = require("mangaweb.cover_prefetch")
 local GrayDitherBridge = require("mangaweb.graydither_bridge")
+local ReaderRefresh = require("mangaweb.ui.reader_refresh")
 
 local Adapter = {}
 Adapter.__index = Adapter
@@ -2073,7 +2074,13 @@ function Adapter:_show_reader_panel(model)
         self.reader_widget.external_controls = true
         if self.reader_widget.graydither_bridge then self.reader_widget.graydither_bridge:pause() end
     end
-    manager:show(controls)
+    local shown, result = pcall(manager.show, manager, controls)
+    if not shown or result == false then
+        -- Show may fail after registering the window. Retire that partial
+        -- dialog and restore the body/refresh state before reporting failure.
+        self:_close_reader_controls()
+        return false
+    end
     return true
 end
 
@@ -2081,6 +2088,14 @@ function Adapter:_show_reader_controls(section)
     local manager, reader = self.ui_manager, self.reader
     if not manager or not reader then return false end
     section = section or "root"
+    if section == "graydither" or section == "refresh"
+        or section == "refresh_interval" or section == "refresh_hold" then
+        if not self.reader_refresh or self.reader_refresh.reader ~= reader
+            or self.reader_refresh.page ~= self.reader_widget then
+            self.reader_refresh = ReaderRefresh:new{adapter=self, reader=reader}
+        end
+        return self.reader_refresh:show(section)
+    end
     if section == "gray" or section == "tone" then
         if not self.reader_filters or self.reader_filters.reader ~= reader then
             self.reader_filters = ReaderFilters:new{adapter=self,reader=reader}
@@ -2159,9 +2174,7 @@ function Adapter:_show_reader_controls(section)
         end)
     end
     local title, items
-    if section == "graydither" then
-        title, items = "灰度与全刷", {}
-    elseif section == "reading" then
+    if section == "reading" then
         title = "阅读翻页"
         local direction = setting("direction", "ltr")
         items = {
@@ -2254,7 +2267,7 @@ function Adapter:_show_reader_controls(section)
     local model = {
         modal = true, title = title, rows = rows_from(items), navigation = navigation,
         status = section == "preload" and "提前下载后续图片，完成后翻页直接读取缓存。默认3页。"
-            or section == "graydither" and "需要安装并启用兼容版本的灰度插件；共享服务当前不可用。" or nil,
+            or nil,
         on_back = section == "root" and close_controls
             or function() return show_section("root") end,
         on_close = close_controls,
@@ -2263,16 +2276,6 @@ function Adapter:_show_reader_controls(section)
 end
 
 function Adapter:_show_graydither_controls()
-    local page = self.reader_widget
-    local bridge = page and page.graydither_bridge
-    if bridge and bridge:isAvailable() then
-        self:_close_reader_controls()
-        if bridge:showMenu(function()
-            if self.reader_widget == page and not page.released then
-                self:_close_reader_controls()
-            end
-        end) then return true end
-    end
     return self:_show_reader_controls("graydither")
 end
 
@@ -2494,6 +2497,7 @@ function Adapter:show_page(path, index, total, options)
 end
 
 function Adapter:close_reader(reason)
+    self.reader_refresh = nil
     if self.reader_filters then self.reader_filters:close(); self.reader_filters=nil end
     local manager = self.ui_manager
     if manager and manager.close then

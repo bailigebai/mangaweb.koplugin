@@ -161,8 +161,9 @@ local function controls_loading_error_suspend_and_close()
         "embedded settings must immediately cancel refresh and hide the body")
     local action=find_action(adapter.reader_controls,"灰度与全刷")
     assert(action.callback())
-    assert(type(session.return_to_reading)=="function", "the shared menu needs a real return-to-reading action")
-    session.return_to_reading()
+    assert(adapter.reader_controls==page.embedded_controls and not session.return_to_reading,
+        "MangaWeb owns these settings without opening the shared service's external menu")
+    adapter.reader_controls.model.on_close()
     assert(not page.embedded_controls and session.options.is_ready(),
         "manual refresh must be able to leave all source settings before returning")
     assert(adapter:show_page_loading(12,178))

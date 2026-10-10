@@ -53,7 +53,17 @@ function Bridge:resume()
 end
 
 function Bridge:reset() return self:_call("reset") end
-function Bridge:showMenu(return_to_reading) return self:_call("showMenu", return_to_reading) end
+function Bridge:settingsChanged() return self:_call("settingsChanged") end
+function Bridge:requestRefresh()
+    if not self:isAvailable() then return false end
+    local session = self.session
+    if type(session.requestRefresh) ~= "function" then self:close(); return false end
+    local ok, accepted = pcall(session.requestRefresh, session)
+    if not ok then self:close(); return false end
+    -- Busy, scrolling and temporarily covered pages may decline a refresh.
+    -- These normal refusals do not invalidate the healthy image session.
+    return accepted == true
+end
 
 function Bridge:close()
     local session = self.session

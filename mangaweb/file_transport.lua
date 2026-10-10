@@ -79,6 +79,17 @@ function FileTransport.request(transport, request, part_path, callbacks)
     local function finish(result)
         if canceled or finished then return end
         finished = true
+        local logger = transport.logger
+        if result.error and logger and type(logger.warn) == "function" then
+            local function token(value)
+                value = tostring(value or "unknown")
+                return #value <= 32 and value:match("^[%w_%-]+$") and value or "unknown"
+            end
+            notify(logger.warn, "MangaWeb file download", "site", token(request.site_id),
+                "stage", token(request.stage), "status", tonumber(result.status) or 0,
+                "error", token(result.error), "cause", token(result.cause or result.error),
+                "elapsed_ms", math.max(0, math.floor((clock() - started) * 1000)))
+        end
         notify(callbacks.on_done, result)
     end
     local function stop(error_code)
@@ -126,7 +137,7 @@ function FileTransport.request(transport, request, part_path, callbacks)
             finish({ error = "background_request_failed" })
         else
             finish({ status = result.status, headers = result.headers or {},
-                bytes = result.bytes, error = result.error,
+                bytes = result.bytes, error = result.error, cause = result.cause,
                 path = not result.error and part_path or nil })
         end
         -- Normal Async completion is already reaped. Timeout/failure may

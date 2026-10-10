@@ -86,6 +86,7 @@ function CoverLoader:request(generation, spec, callbacks)
         end
         local buffer, owned = result.buffer, false
         if not buffer then
+            self.loader:_log(diagnostic, "thumbnail_decode_start")
             local renderer = self.render_image
             if not renderer then
                 local ok, value = pcall(require, "ui/renderimage")
@@ -97,6 +98,7 @@ function CoverLoader:request(generation, spec, callbacks)
             end
         end
         if not buffer then
+            self.loader:_log(diagnostic, "thumbnail_decode_failed", "image_error")
             if not cache_hit then error_callback({ code = "image_error", site_id = spec.site_id, stage = "cover" }) end
             return false, false
         end
@@ -106,6 +108,7 @@ function CoverLoader:request(generation, spec, callbacks)
         local ok, accepted = false, false
         if type(callbacks.on_ready) == "function" then ok, accepted = pcall(callbacks.on_ready, delivered) end
         accepted = ok and accepted ~= false
+        self.loader:_log(diagnostic, accepted and "thumbnail_display_ready" or "thumbnail_display_rejected")
         -- ImageLoader owns buffers it provided; only our decoded derivatives are ours to free.
         if owned and not accepted then free(buffer) end
         return accepted, true
@@ -135,9 +138,14 @@ function CoverLoader:request(generation, spec, callbacks)
         -- Preview originals use the reader's cache; the JPEG displayed here is
         -- only a derivative and must never replace a full reading page.
         local page_cache = self.loader.page_cache
-        request.cache_identity = spec.stage == "preview" and page_cache
-            and ImageIdentity.page(spec, spec.headers, page_cache.sha256) or nil
-        if request.cache_identity and type(self.loader.http.get_file) == "function" then
+        if page_cache then
+            local identify = spec.stage == "preview" and ImageIdentity.page or ImageIdentity.cover
+            request.cache_identity = identify(spec, spec.headers, page_cache.sha256)
+        end
+        -- File downloads keep DNS, transfer and full-size response bytes off
+        -- the UI thread. Originals survive a home/detail session change and
+        -- can produce another thumbnail size without another transfer.
+        if type(self.loader.http.get_file) == "function" then
             request.stage = "image"
         end
         request.diagnostic_stage = spec.stage

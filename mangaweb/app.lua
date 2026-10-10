@@ -114,8 +114,9 @@ local function default_runtime(options)
         local ok, value = pcall(require, "logger")
         logger = ok and value or nil
     end
+    options.logger = logger
     local transport = require("mangaweb.transport"):new{ logger = logger }
-    local http = options.http or require("mangaweb.http"):new{ transport = transport }
+    local http = options.http or require("mangaweb.http"):new{ transport = transport, logger = logger }
     local auth = options.auth or require("mangaweb.auth"):new{
         settings = settings, http = http,
         origins = { zero = definitions:zero_origin() },
@@ -158,7 +159,6 @@ local function default_runtime(options)
         auth = auth, http = http,
     }
     options.settings_store = LuaSettings
-    options.logger = logger
     ensure_license_runtime(options)
     return options
 end

@@ -2,7 +2,7 @@ local M = {}
 
 local ERROR_MESSAGES = {
     network_error = "网络连接失败，请检查网络后重试",
-    transport_error = "HTTPS 连接失败，请检查时间和网络",
+    transport_error = "网络传输失败，请重试",
     http_error = "站点请求失败，请稍后重试",
     http_unavailable = "网络功能不可用",
     invalid_credentials = "账号或密码错误",

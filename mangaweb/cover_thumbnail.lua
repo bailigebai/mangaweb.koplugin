@@ -26,15 +26,19 @@ function Thumbnail.process(source, output, profile, renderer)
         local ok, value = pcall(require, "ui/renderimage")
         if ok then renderer = value end
     end
-    if not renderer or type(renderer.renderImageFile) ~= "function" then return nil end
+    if not renderer or type(renderer.renderImageFile) ~= "function" then
+        return nil, "thumbnail_renderer_unavailable"
+    end
     local ok, buffer = pcall(renderer.renderImageFile, renderer, source, false,
         profile.target_width, profile.target_height)
-    if not ok or not buffer then return nil end
+    if not ok or not buffer then return nil, "thumbnail_decode_failed" end
     local wrote, success = pcall(function() return buffer:writeToFile(output, "jpg", 75) end)
     if type(buffer.free) == "function" then pcall(buffer.free, buffer) end
-    if not wrote or success ~= true then return nil end
+    if not wrote or success ~= true then return nil, "thumbnail_encode_failed" end
     local width, height = ImageDimensions.from_file(output)
-    if not width or not height or width > profile.target_width or height > profile.target_height then return nil end
+    if not width or not height or width > profile.target_width or height > profile.target_height then
+        return nil, "thumbnail_validation_failed"
+    end
     return { width = width, height = height, thumbnail = true }
 end
 

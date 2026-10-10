@@ -52,6 +52,11 @@ local function setup(existing_reader)
     end
     reader.settings=settings
     function reader:settings_snapshot() return settings:reader_settings() end
+    function reader:update_settings(changes)
+        local values=settings:reader_settings()
+        for key,value in pairs(changes) do values[key]=value end
+        return settings:save_reader_settings(values)
+    end
     G_reader_settings=Scheduler.store{graydither_enabled=true,graydither_refresh_enabled=true}
     local session
     package.loaded.pluginloader={getPluginInstance=function(_,name)
@@ -93,6 +98,42 @@ test("source and real session default off ignore global true and failed save",fu
     store.fail_flush=false
     session:getMenuItems()[1].callback()
     eq(session.preferences:isEnabled(),true);eq(settings:reader_settings().graydither_enabled,true)
+    cleanup()
+end)
+
+test("MangaWeb embedded controls notify real session without external dialogs",function()
+    local adapter,reader,page,session,store,settings,paint,cleanup=setup()
+    local function choose(text)
+        local model=assert(adapter.reader_controls).model
+        for _,row in ipairs(model.rows or {})do
+            for _,item in ipairs(row.items or {})do
+                if item.text==text then return item.callback() end
+            end
+        end
+        for _,item in ipairs(model.navigation or {})do
+            if item.text==text then return item.callback() end
+        end
+        error("missing action: "..text)
+    end
+    assert(adapter:_show_graydither_controls())
+    eq(session.menu,nil);eq(page.embedded_controls,adapter.reader_controls);eq(session.paused,true)
+    assert(choose("灰度抖动：关闭"));eq(settings:reader_settings().graydither_enabled,true)
+    assert(choose("墨水屏刷新"));assert(choose("自动全刷：关闭"))
+    assert(choose("自动间隔：每 5 页"));assert(choose("−1"));assert(choose("保存"))
+    eq(session.refresh_preferences:getInterval(),4);eq(session.refresh_preferences:getEnabled(),true)
+    eq(session.menu,nil);eq(next(session.widgets),nil)
+    assert(choose("返回阅读"));eq(session.paused,false)
+    local image=paint()
+    for i,value in ipairs({0,17,136,238})do eq(image:getPixel((i-1)%2,math.floor((i-1)/2)).a,value) end
+    assert(adapter:_show_graydither_controls());assert(choose("墨水屏刷新"));assert(choose("立即全刷"))
+    eq(page.embedded_controls,nil);UI:advance(0);eq(session.refresher.completed,1)
+    assert(adapter:_show_graydither_controls());assert(choose("墨水屏刷新"))
+    UI.currently_scrolling=true
+    assert(choose("立即全刷"));eq(session.closed,false)
+    assert(page.graydither_bridge:isAvailable(), "a deferred refresh must keep the healthy image service")
+    assert(adapter.reader_controls.model.status:find("刷新未完成"))
+    UI.currently_scrolling=false
+    assert(choose("立即全刷"));UI:advance(0);eq(session.refresher.completed,2)
     cleanup()
 end)
 
