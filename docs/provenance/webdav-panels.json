@@ -2,7 +2,7 @@
   "source": "bailigebai/webdavmanga.koplugin",
   "version": "0.4.21",
   "commit": "567002ce1d53e45f35020c849125fe7ef0fd2f20",
-  "transformation": "webdavmanga.panel_ -> mangaweb.panel_ only",
+  "transformation": "Initial copy: webdavmanga.panel_ -> mangaweb.panel_; subsequent MangaWeb-only adaptations are recorded below. Original source unchanged.",
   "files": [
     {
       "file": "mangaweb/panel_analysis.lua",
@@ -44,5 +44,43 @@
       "source_sha256": "d8c3b316d91e82bb731bf239683bf58fb4e547ce22d08323580faa933de4ebcf",
       "copy_sha256": "d8c3b316d91e82bb731bf239683bf58fb4e547ce22d08323580faa933de4ebcf"
     }
-  ]
+  ],
+  "adaptations": {
+    "version": "0.8.88",
+    "changes": "Recognition strength, candidate area, edge evidence, overflow protection distance, and safe in-place redetection.",
+    "files": [
+      {
+        "file": "mangaweb/panel_settings.lua",
+        "sha256": "df6e2ea7b78d19d32fc15e8bbd66a93d5caf4953b4f4842fdf5863d79b1912b5"
+      },
+      {
+        "file": "mangaweb/panel_analysis.lua",
+        "sha256": "529c63652a4f3530d7e0983ea78701ab142e56e343e8740503ba74d0abfe0269"
+      },
+      {
+        "file": "mangaweb/panel_components.lua",
+        "sha256": "970b2ecbb1c0b220cc0670f529dbf4b0ccaeecd7bfb5f3a9a94437e694991810"
+      },
+      {
+        "file": "mangaweb/panel_detector.lua",
+        "sha256": "41ad9a1eb99fcca219d825787ef2f1e1eac9f53acdd2f2590acf4907562df6f4"
+      },
+      {
+        "file": "mangaweb/panel_session.lua",
+        "sha256": "8f798eec67dd74407edc901236daf72e9457127edf35abc257b3d71428828de5"
+      },
+      {
+        "file": "mangaweb/reader_panels.lua",
+        "sha256": "ea8caed8b549ae8af826fe569b3316c45cbeac59a4f2f4658f191007185bf714"
+      },
+      {
+        "file": "mangaweb/ui/reader_panels.lua",
+        "sha256": "c7d1f7dd6d575fdd14ca255ff3d4513125af13b0e798e35d45669dc969cdc859"
+      },
+      {
+        "file": "mangaweb/ui/webdav_reader_shell.lua",
+        "sha256": "36201572cfc864e5055f275f55dd280b4e7ae896ebaab0d2a38ed7fbc893ec98"
+      }
+    ]
+  }
 }

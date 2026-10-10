@@ -15,7 +15,22 @@ local function gray(buffer,x,y)
     assert(finite(value),"invalid_pixel")
     return math.max(0,math.min(255,math.floor(value)))
 end
-local function sample(raster)
+local function tuning(options)
+    options=options or {}
+    assert(type(options)=='table','invalid_panel_settings')
+    local strength=options.strength_percent or 100
+    local area=options.min_area_permille or 2
+    local frames=options.frame_min or 1
+    local distance=options.dialogue_distance_percent or 12
+    assert(finite(strength) and strength>=50 and strength<=200 and strength==math.floor(strength),
+        'invalid_panel_strength')
+    assert(({[1]=true,[2]=true,[5]=true,[10]=true,[20]=true})[area],'invalid_panel_area')
+    assert(finite(frames) and frames>=1 and frames<=4 and frames==math.floor(frames),'invalid_panel_frames')
+    assert(finite(distance) and distance>=5 and distance<=25 and distance==math.floor(distance),
+        'invalid_panel_dialogue')
+    return {threshold=40*100/strength,area=area/1000,frames=frames,distance=distance/100}
+end
+local function sample(raster,threshold)
     local b=assert(raster.buffer)
     local bw,bh=b:getWidth(),b:getHeight()
     assert(finite(bw) and finite(bh) and bw>=8 and bh>=8,"invalid_page")
@@ -58,7 +73,7 @@ local function sample(raster)
     end
     local ink=0
     for i=0,w*h-1 do
-        data[i]=math.abs(data[i]-background)>40 and 1 or 0
+        data[i]=math.abs(data[i]-background)>threshold and 1 or 0
         ink=ink+data[i]
     end
     return {w=w,h=h,data=data,ink=ink}
@@ -73,7 +88,7 @@ local function distance(a,b)
     local dy=math.max(0,a.y-b.y-b.h,b.y-a.y-a.h)
     return math.sqrt(dx*dx+dy*dy)
 end
-local function protect(panels,map)
+local function protect(panels,map,max_distance)
     local seen=Arrays.new("uint8_t[?]",map.w*map.h)
     for _,p in ipairs(panels) do
         p.protect=padded(p.protect or p,map,2)
@@ -100,7 +115,7 @@ local function protect(panels,map)
                 local orphan={x=x1,y=y1,w=x2-x1+1,h=y2-y1+1}
                 local nearest=math.huge
                 for _,p in ipairs(panels) do nearest=math.min(nearest,distance(orphan,p)) end
-                if nearest>math.min(map.w,map.h)*.12 then return nil,"panel_content_uncovered" end
+                if nearest>math.min(map.w,map.h)*max_distance then return nil,"panel_content_uncovered" end
                 -- At an ambiguous boundary include the content in both views.
                 -- It is never used to change the frame ID or reading order.
                 local attached=false
@@ -119,15 +134,21 @@ local function protect(panels,map)
     end
     return panels
 end
-local function detect(raster)
-    local map=sample(raster)
+local function detect(raster,options)
+    local config=tuning(options)
+    local map=sample(raster,config.threshold)
     if map.ink==0 then return nil,"no_panels" end
-    local panels,reason=Components.segment(map,{component_frame_min=1,segment_max_panels=64})
+    local panels,reason=Components.segment(map,{component_frame_min=config.frames,
+        component_min_area=config.area,segment_max_panels=64})
     if #panels==0 then return nil,reason or "no_panels" end
     if #panels==1 and panels[1].w*panels[1].h<map.w*map.h*.6 then
         return nil,"panel_layout_uncertain"
     end
-    local value,reason=protect(panels,map)
+    -- Candidate sensitivity may be reduced, but content protection must retain
+    -- at least the original ink threshold. Share the map unless it is weaker.
+    local protection_map=map
+    if config.threshold>40 then protection_map=sample(raster,40) end
+    local value,reason=protect(panels,protection_map,config.distance)
     if not value then return nil,reason end
     for _,p in ipairs(panels) do
         p.x,p.y,p.w,p.h=p.x/map.w,p.y/map.h,p.w/map.w,p.h/map.h
@@ -136,8 +157,8 @@ local function detect(raster)
     end
     return panels
 end
-function Analysis.detect(raster)
-    local ok,value,reason=pcall(detect,raster)
+function Analysis.detect(raster,options)
+    local ok,value,reason=pcall(detect,raster,options)
     if not ok then return nil,"panel_detection_failed" end
     return value,reason
 end

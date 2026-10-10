@@ -261,7 +261,7 @@ end
 function ComponentDetector.segment(map, settings)
     settings = settings or Settings.defaults
     local min_side = 0.02
-    local min_area = map.w * map.h * 0.002
+    local min_area = map.w * map.h * (settings.component_min_area or 0.002)
     local components,reason = collectComponents(map, min_side, min_area)
     if not components then return {},reason end
     local cells = {}
@@ -292,6 +292,10 @@ function ComponentDetector.segment(map, settings)
         if box.frame_sides >= (settings.component_frame_min or 1) then
             box.order_rect=box.order_rect or {x=box.x,y=box.y,w=box.w,h=box.h}
             framed[#framed + 1] = box
+        elseif box.frame_sides > 0 and (settings.component_frame_min or 1) > 1 then
+            -- A stricter setting cannot silently reclassify a rejected frame
+            -- as an independent floating panel. Keep the complete page instead.
+            return {}, "panel_layout_uncertain"
         else
             floating[#floating + 1] = box
         end

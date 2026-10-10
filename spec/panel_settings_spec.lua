@@ -7,6 +7,23 @@ local store={readSetting=function(_,key,default) return data[key] or default end
 local settings=Settings:new{store=store}
 local prefs=Preferences:new{settings=settings}
 assert(prefs:for_comic('zero','1').enabled==false)
+local defaults=prefs:for_comic('zero','1')
+assert(defaults.strength_percent==100 and defaults.min_area_permille==2
+    and defaults.frame_min==1 and defaults.dialogue_distance_percent==12,
+    'recognition defaults must match current algorithm')
+assert(prefs:save('zero','tuning',{strength_percent=150,min_area_permille=5,
+    frame_min=3,dialogue_distance_percent=20},false))
+assert(prefs:for_comic('zero','other').strength_percent==100)
+for _,invalid in ipairs({{strength_percent=49},{strength_percent=201},{strength_percent=100.5},
+    {strength_percent=0/0},{strength_percent=math.huge},{min_area_permille=3},
+    {frame_min=0},{frame_min=5},{dialogue_distance_percent=4},{dialogue_distance_percent=26}}) do
+    assert(not prefs:save('zero','tuning',invalid,true), 'invalid detection settings must be rejected')
+end
+assert(prefs:save('zero','tuning',{view='cut',rotation=90,enabled=true},false))
+assert(prefs:save('zero','tuning',Preferences.detection_defaults(),false))
+local reset=prefs:for_comic('zero','tuning')
+assert(reset.strength_percent==100 and reset.min_area_permille==2 and reset.frame_min==1
+    and reset.dialogue_distance_percent==12 and reset.view=='cut' and reset.rotation==90 and reset.enabled)
 assert(prefs:save('zero','1',{enabled=true,view='cut',rotation=90},false))
 assert(prefs:for_comic('bilibili','1').enabled==false)
 assert(prefs:save('zero','2',{enabled=true,view='free'},true))

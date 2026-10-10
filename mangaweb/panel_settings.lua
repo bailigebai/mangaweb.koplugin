@@ -3,19 +3,32 @@ local Settings={}
 Settings.__index=Settings
 local KEY='panel_preferences'
 local DEFAULT={enabled=false,view='context',rotation=0,navigation='horizontal',
-    reverse_navigation=false,order='follow',show_adjacent=true,margin_percent=0}
+    reverse_navigation=false,order='follow',show_adjacent=true,margin_percent=0,
+    strength_percent=100,min_area_permille=2,frame_min=1,dialogue_distance_percent=12}
 local VALID={view={context=true,cut=true,free=true},rotation={[0]=true,[90]=true,[180]=true,[270]=true},
     navigation={horizontal=true,vertical=true},order={follow=true,normal=true,manga=true},
-    margin_percent={[0]=true,[2]=true,[5]=true,[10]=true}}
+    margin_percent={[0]=true,[2]=true,[5]=true,[10]=true},
+    min_area_permille={[1]=true,[2]=true,[5]=true,[10]=true,[20]=true},
+    frame_min={[1]=true,[2]=true,[3]=true,[4]=true}}
+local RANGES={strength_percent={50,200},dialogue_distance_percent={5,25}}
 local function normalize(base,changes)
     if changes~=nil and type(changes)~='table' then return nil end
     local values=copy(base)
     for key,value in pairs(changes or {}) do
-        if DEFAULT[key]==nil or (VALID[key] and not VALID[key][value])
-            or (not VALID[key] and type(value)~='boolean') then return nil end
+        if DEFAULT[key]==nil then return nil end
+        if RANGES[key] then
+            if type(value)~='number' or value~=value or value<RANGES[key][1]
+                or value>RANGES[key][2] or value~=math.floor(value) then return nil end
+        elseif VALID[key] then
+            if not VALID[key][value] then return nil end
+        elseif type(value)~='boolean' then return nil end
         values[key]=value
     end
     return values
+end
+function Settings.detection_defaults()
+    return {strength_percent=DEFAULT.strength_percent,min_area_permille=DEFAULT.min_area_permille,
+        frame_min=DEFAULT.frame_min,dialogue_distance_percent=DEFAULT.dialogue_distance_percent}
 end
 local function comic_key(site,comic)
     site,comic=tostring(site or ''),tostring(comic or '')

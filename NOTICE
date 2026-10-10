@@ -1,4 +1,4 @@
-MangaWeb uses KOReader public interfaces. The full-screen reader input and close model derives from WebDAVManga ui_reader_shell.lua. The standalone panel core is copied from WebDAVManga v0.4.21 (567002ce1d53e45f35020c849125fe7ef0fd2f20); only its internal module namespace is changed. File provenance is recorded in docs/provenance/webdav-panels.json. Site content and image copyrights belong to their respective owners.
+MangaWeb uses KOReader public interfaces. The full-screen reader input and close model derives from WebDAVManga ui_reader_shell.lua. The standalone panel core was initially copied from WebDAVManga v0.4.21 (567002ce1d53e45f35020c849125fe7ef0fd2f20) with its internal module namespace changed. MangaWeb subsequently added independent recognition tuning and safe redetection; the original WebDAVManga plugin is not modified. Initial copy hashes and later adaptations are recorded in docs/provenance/webdav-panels.json. Site content and image copyrights belong to their respective owners.
 
 Panel component detection and geometry contain adapted code from PanelsPlus,
 revision 14c53e9daec5a34e627dddb3bd52483ddb787bad:

@@ -254,23 +254,26 @@ function NativeReader:show(model)
         return controls
     end
 
-    function Page:_rebuild_surface()
-        if self.embedded_controls then
-            self[1] = self.embedded_controls
-            return
-        end
-        local controls = self:_controls()
-        local children = { self.image_surface }
+    function Page:_new_reader_surface(image_surface, controls)
+        local children = { image_surface }
         for _, control in ipairs(controls) do children[#children + 1] = control end
         if dependencies.overlap_group then
             children.dimen = dependencies.geom and dependencies.geom:new{
                 w = self.width, h = self.height,
             } or { w = self.width, h = self.height }
             children.allow_mirroring = false
-            self[1] = new_widget(dependencies.overlap_group, children)
+            return new_widget(dependencies.overlap_group, children)
         else
-            self[1] = self.image_surface or self.image
+            return image_surface
         end
+    end
+
+    function Page:_rebuild_surface()
+        if self.embedded_controls then
+            self[1] = self.embedded_controls
+            return
+        end
+        self[1] = self:_new_reader_surface(self.image_surface or self.image, self:_controls())
     end
 
     function Page:show_controls(model)
@@ -413,13 +416,30 @@ function NativeReader:show(model)
         if not ok or not image then return false end
         local decoded,size=pcall(image.getSize,image)
         if not decoded or not size then pcall(image.free,image);return false end
+        -- Prepare every allocating widget before publishing the borrowed buffer.
+        -- A rejected candidate is freed by PanelSession, so no visible widget
+        -- may retain it when this method returns false.
+        local prepared,surface,root=pcall(function()
+            local next_surface=self:_new_image_surface(image)
+            local next_root=self.embedded_controls
+                or self:_new_reader_surface(next_surface,self.control_widgets or {})
+            assert(next_surface and next_root,'panel_surface_unavailable')
+            return next_surface,next_root
+        end)
+        if not prepared then pcall(image.free,image);return false end
         local previous=self.image
         if not self.whole_image then
             self.whole_image,self.whole_surface=previous,self.image_surface
         end
         self.image,self.panel_info=image,info or {}
-        self.image_surface=self:_new_image_surface(image)
-        self:_rebuild_surface();self:_attach_graydither();self:_dirty()
+        self.image_surface,self[1]=surface,root
+        -- The optional gray service must not reject an already published image.
+        local attached=pcall(self._attach_graydither,self)
+        if not attached then
+            local bridge=self.graydither_bridge;self.graydither_bridge=nil
+            if bridge and type(bridge.close)=='function' then pcall(bridge.close,bridge) end
+        end
+        self:_dirty()
         if previous~=self.whole_image then pcall(previous.free,previous) end
         return true
     end

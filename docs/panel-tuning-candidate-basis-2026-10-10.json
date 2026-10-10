@@ -1,0 +1,7 @@
+{
+  "source_base": "633551e736a4f13bc154055438d2689c87280343",
+  "extension_base": "372de0e",
+  "extension_commit": "88a2cecacb8ff532e4e747da034df961bd3c9bb0",
+  "scope": "MangaWeb panel tuning only; Bilibili research excluded; original WebDAVManga untouched",
+  "status": "candidate; package and device verification pending"
+}

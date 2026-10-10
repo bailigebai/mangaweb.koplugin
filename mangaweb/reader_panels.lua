@@ -71,7 +71,9 @@ function Panels:enter(desired)
     local direction=self:_direction(config)
     return self.session:start({generation=generation,page_path=context.raw_path,page_buffer=context.buffer,
         engine='default',direction=direction,desired=desired or 'first',view=config.view,
-        rotation=config.rotation,show_adjacent=config.show_adjacent,margin_percent=config.margin_percent}, {
+        rotation=config.rotation,show_adjacent=config.show_adjacent,margin_percent=config.margin_percent,
+        strength_percent=config.strength_percent,min_area_permille=config.min_area_permille,
+        frame_min=config.frame_min,dialogue_distance_percent=config.dialogue_distance_percent}, {
         on_panel=function(buffer,panel,index,count,render)
             if not valid() or not self.ui.show_panel then return false end
             local current=self:values()
@@ -125,7 +127,16 @@ function Panels:configure(values,commit,rollback)
     end
     local session=self.session
     local previous_direction=session.direction
-    local accepted,reason=session:configure(values,commit,rollback)
+    local detection
+    if values.strength_percent~=nil or values.min_area_permille~=nil or values.frame_min~=nil
+        or values.dialogue_distance_percent~=nil then
+        local config=Presets.copy(self:values())
+        for key,value in pairs(values) do config[key]=value end
+        detection={direction=self:_direction(config),strength_percent=config.strength_percent,
+            min_area_permille=config.min_area_permille,frame_min=config.frame_min,
+            dialogue_distance_percent=config.dialogue_distance_percent}
+    end
+    local accepted,reason=session:configure(values,commit,rollback,detection)
     if accepted and values.order then
         local current=session:set_direction(self:_direction(self:values()))
         if current and session.callbacks.on_panel(current.buffer,current.panel,current.index,current.count,session.render_options) then

@@ -1,0 +1,16 @@
+{
+  "base": "633551e736a4f13bc154055438d2689c87280343",
+  "extension_commit": "88a2cec",
+  "version": "0.8.88",
+  "package_sha256": "454648cbeeecd43eb499bd8442514f03333990e97bec639135a31be5d2be494d",
+  "runtime_files": 84,
+  "source_specs_passed": 56,
+  "unpacked_package_specs_passed": 56,
+  "runtime_lua_syntax_passed": 80,
+  "device_runtime_hashes_matched": 84,
+  "device_cache_files_preserved": 137,
+  "device_backup": "E:\\jiankong\\webdav-manga-handoff\\device-backups\\2026-10-10-before-mangaweb-repair-811ba56b",
+  "device_readback": "E:\\jiankong\\webdav-manga-handoff\\device-install-verify\\2026-10-10-mangaweb-v0.8.88-tuning-ba1bc6e9\\mangaweb.koplugin",
+  "hardware_acceptance": "v87 basic panels user-confirmed; v88 tuning, repeated changes and memory pressure pending",
+  "review": "one independent review; pale overflow omission and atomic publication failures reproduced and corrected"
+}

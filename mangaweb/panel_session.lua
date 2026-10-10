@@ -56,16 +56,17 @@ function PanelSession:_fallback(token, reason)
     if self.token == token then self:close() end
 end
 
-function PanelSession:_render(index,options)
+function PanelSession:_render(index,options,candidate)
     if self.rendering then return nil, "panel_session_busy" end
-    local token, handle, panel_id = self.token, self.handle, self.panels[index].id
+    local panel=candidate or self.panels[index]
+    local token, handle, panel_id = self.token, self.handle, panel.id
     -- Keep the reservation until native render unwinds, even if close is reentered.
     self.rendering = true
-    local ok, buffer, reason = pcall(handle.render, handle, self.panels[index], options or self.render_options)
+    local ok, buffer, reason = pcall(handle.render, handle, panel, options or self.render_options)
     self.rendering = false
     if not ok then return nil, "panel_render_failed" end
     if self.token ~= token then release(buffer, "free"); return nil, "panel_session_closed" end
-    if not self.panels[index] or self.panels[index].id ~= panel_id then
+    if not candidate and (not self.panels[index] or self.panels[index].id ~= panel_id) then
         release(buffer, "free"); return nil, "panel_session_stale"
     end
     return buffer, reason or "panel_render_failed"
@@ -91,7 +92,8 @@ function PanelSession:_schedule_next()
     end)
 end
 
-function PanelSession:_publish(index, buffer,options)
+function PanelSession:_publish(index, buffer,options,panels)
+    local layout=panels or self.panels
     local token, pending = self.token, {buffer=buffer}
     self.pending = pending
     local callback = self.callbacks and self.callbacks.on_panel
@@ -99,7 +101,7 @@ function PanelSession:_publish(index, buffer,options)
     if callback then
         -- These options have already rendered this allocation. The committed
         -- render_options below still belongs to the previous visible camera.
-        ok, accepted = pcall(callback, buffer, self.panels[index], index, #self.panels,
+        ok, accepted = pcall(callback, buffer, layout[index], index, #layout,
             options or self.render_options)
     end
     if self.token ~= token then
@@ -109,7 +111,7 @@ function PanelSession:_publish(index, buffer,options)
     self.pending = nil
     if not ok or accepted == false then release(buffer, "free"); return false end
     local previous = self.current_buffer
-    self.current_buffer, self.index, self.active = buffer, index, true
+    self.current_buffer, self.index, self.active, self.panels = buffer, index, true, layout
     if options then self.render_options=options end
     self.render_failures = 0
     release(previous, "free")
@@ -194,17 +196,34 @@ function PanelSession:move(delta)
     return self:_publish(index, buffer,options)
 end
 
-function PanelSession:configure(values,commit,rollback)
+function PanelSession:configure(values,commit,rollback,detection)
     if self.rendering or self.configuring or self.pending or not self.active then return false,"panel_session_busy" end
     self.configuring=true
+    local token=self.token
     local function finish(value,reason) self.configuring=false;return value,reason end
     local options={}
     for k,v in pairs(self.render_options) do options[k]=v end
     for k,v in pairs(values or {}) do options[k]=v end
     self:release_next()
-    local buffer,reason=self:_render(self.index,options)
-    if not buffer then return finish(false,reason) end
-    local token=self.token
+    local layout,index=self.panels,self.index
+    if detection then
+        local ok,panels,reason=pcall(function()
+            local raster,err=self.handle:detection_raster()
+            if not raster then return nil,err end
+            return self.detector.detect(raster,detection)
+        end)
+        if self.token~=token then return finish(false,'panel_session_closed') end
+        if not ok or type(panels)~='table' or #panels==0 then
+            self:_fallback(token,ok and reason or 'panel_detection_failed')
+            return finish(false,'panel_detection_failed')
+        end
+        layout,index=panels,1
+    end
+    local buffer,reason=self:_render(index,options,detection and layout[index] or nil)
+    if not buffer then
+        if detection then self:_fallback(token,reason) end
+        return finish(false,reason)
+    end
     if commit then
         local ok,accepted=pcall(commit)
         if not ok or accepted~=true then release(buffer,"free");return finish(false,"panel_settings_failed") end
@@ -214,7 +233,7 @@ function PanelSession:configure(values,commit,rollback)
         if rollback then pcall(rollback) end
         return finish(false,"panel_session_closed")
     end
-    local accepted=self:_publish(self.index,buffer,options)
+    local accepted=self:_publish(index,buffer,options,layout)
     if not accepted and rollback then pcall(rollback) end
     return finish(accepted)
 end
