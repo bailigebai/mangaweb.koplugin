@@ -2364,6 +2364,12 @@ end
 function Adapter:_reader_actions()
     local adapter = self
     return {
+        enter_panels=function() return adapter.reader and adapter.reader:enter_panel_mode() end,
+        pan_panel=function(dx,dy) return adapter.reader and adapter.reader:pan_panel(dx,dy) end,
+        zoom_panel=function(factor) return adapter.reader and adapter.reader:zoom_panel(factor) end,
+        reader_closed=function()
+            if adapter.reader and not adapter.reader.closed then return adapter.reader:close('window_closed') end
+        end,
         previous = function()
             return adapter.reader and call_action(function() return adapter.reader:previous() end)
         end,
@@ -2495,6 +2501,17 @@ function Adapter:show_page(path, index, total, options)
     manager:show(page)
     return true
 end
+
+function Adapter:panel_snapshot()
+    return self.reader_widget and self.reader_widget:panel_snapshot()
+end
+function Adapter:show_panel(buffer,info)
+    return self.reader_widget and self.reader_widget:show_panel(buffer,info) or false
+end
+function Adapter:detach_panel()
+    return not self.reader_widget or self.reader_widget:detach_panel()
+end
+function Adapter:restore_panel_page() return self:detach_panel() end
 
 function Adapter:close_reader(reason)
     self.reader_refresh = nil

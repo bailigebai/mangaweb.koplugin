@@ -59,6 +59,7 @@ function NativeReader:show(model)
             -- inserted below that root and remain invisible even though
             -- UIManager:show() succeeded.
             modal = true, fullscreen = true, covers_fullscreen = true,
+            stop_events_propagation = true,
             disable_double_tap = false,
         } or { disable_double_tap = false }
     Page.__index = Page
@@ -72,7 +73,10 @@ function NativeReader:show(model)
 
     function Page:_turn(edge)
         local forward = edge == "right"
-        if self.direction == "rtl" then forward = not forward end
+        if self.panel_info and self.panel_info.navigation=='vertical' then
+            forward=edge=='bottom'
+        elseif self.direction == "rtl" then forward = not forward end
+        if self.panel_info and self.panel_info.reverse_navigation then forward=not forward end
         return self:_action(forward and "next" or "previous")
     end
 
@@ -99,6 +103,17 @@ function NativeReader:show(model)
             -- download URLs never enter the shared service's page identity.
             local token = table.concat({tostring(self.index), self.segment or "whole",
                 tostring(self.pan_y or 0), self.fit_mode or "page", tostring(self.split_cut_percent or 50)}, ":")
+            if self.panel_info then
+                local p=self.panel_info
+                token=table.concat({'panel',tostring(self.index),tostring(p.panel_id),
+                    tostring(p.rotation or 0),p.view or 'context',tostring(p.zoom or 1),
+                    tostring(p.pan_x or 0),tostring(p.pan_y or 0)},':')
+                self.panel_restore_token=token
+            elseif self.panel_restore_token then
+                -- Returning to the original view is not another physical page
+                -- or panel. Keep the last logical token until normal navigation.
+                token=self.panel_restore_token
+            end
             bridge:attachImage(self.image, token)
             if self:_graydither_ready() then bridge:resume()
             elseif self.embedded_controls or self.external_controls or self.suspended then bridge:pause()
@@ -356,6 +371,8 @@ function NativeReader:show(model)
 
     function Page:update_page(path, index, total, options)
         if self.released then return false end
+        self:detach_panel()
+        self.panel_restore_token=nil
         options = options or {}
         local next_total = math.max(1, math.floor(tonumber(total) or 1))
         local next_image = self:_new_image(path)
@@ -376,6 +393,43 @@ function NativeReader:show(model)
         self:_attach_graydither()
         self:_dirty()
         if previous and type(previous.free) == "function" then pcall(previous.free, previous) end
+        return true
+    end
+
+    function Page:panel_snapshot()
+        if self.released or self.loading or self.error then return nil end
+        local image=self.whole_image or self.image
+        if not image then return nil end
+        local ok=pcall(image.getSize,image)
+        if not ok or not image._bb then return nil end
+        return {buffer=image._bb,width=self.width,height=self.height}
+    end
+
+    function Page:show_panel(buffer,info)
+        if self.released or self.loading or self.error or not self.image or not buffer then return false end
+        local ok,image=pcall(dependencies.image_widget.new,dependencies.image_widget,
+            {image=buffer,image_disposable=false,width=self.width,height=self.height,scale_factor=0})
+        if not ok or not image then return false end
+        local decoded,size=pcall(image.getSize,image)
+        if not decoded or not size then pcall(image.free,image);return false end
+        local previous=self.image
+        if not self.whole_image then
+            self.whole_image,self.whole_surface=previous,self.image_surface
+        end
+        self.image,self.panel_info=image,info or {}
+        self.image_surface=self:_new_image_surface(image)
+        self:_rebuild_surface();self:_attach_graydither();self:_dirty()
+        if previous~=self.whole_image then pcall(previous.free,previous) end
+        return true
+    end
+
+    function Page:detach_panel()
+        if not self.whole_image then return true end
+        local previous=self.image
+        self.image,self.image_surface=self.whole_image,self.whole_surface
+        self.whole_image,self.whole_surface,self.panel_info=nil,nil,nil
+        self:_rebuild_surface();self:_attach_graydither();self:_dirty()
+        if previous then pcall(previous.free,previous) end
         return true
     end
 
@@ -408,12 +462,16 @@ function NativeReader:show(model)
         return true
     end
 
-    function Page:on_tap(region, x)
+    function Page:on_tap(region, x, y)
         if self.embedded_controls then return true end
         if region ~= "left" and region ~= "right" and region ~= "center" then
             x = tonumber(x) or self.width / 2
             region = x < self.width / 3 and "left"
                 or x > self.width * 2 / 3 and "right" or "center"
+        end
+        if self.panel_info and self.panel_info.navigation=='vertical' then
+            y=tonumber(y) or self.height/2
+            region=y<self.height/3 and 'top' or y>self.height*2/3 and 'bottom' or 'center'
         end
         if region == "center" then
             if self.loading or self.error then return true end
@@ -424,14 +482,46 @@ function NativeReader:show(model)
 
     function Page:onTap(_, gesture)
         local position = gesture and gesture.pos or {}
-        return self:on_tap(nil, position.x)
+        return self:on_tap(nil, position.x,position.y)
     end
 
     function Page:onSwipe(_, gesture)
         if self.embedded_controls then return true end
+        if self.panel_info and self.panel_info.view=='free' then return true end
         local direction = gesture and gesture.direction
+        if self.panel_info and self.panel_info.navigation=='vertical' then
+            if direction=='north' then return self:_turn('bottom') end
+            if direction=='south' then return self:_turn('top') end
+            return true
+        end
         if direction == "west" then return self:_turn("right") end
         if direction == "east" then return self:_turn("left") end
+        return true
+    end
+
+    function Page:onHold()
+        if self.released or self.embedded_controls or self.loading or self.error then return true end
+        return self:_action('enter_panels')
+    end
+    function Page:onPanelPan(_,gesture)
+        if self.embedded_controls or self.loading or self.error or not self.panel_info
+            or self.panel_info.view~='free' then return true end
+        local delta=gesture and gesture.relative or {}
+        if type(delta.x)=='number' and type(delta.y)=='number' then
+            return self:_action('pan_panel',delta.x,delta.y)
+        end
+        return true
+    end
+    function Page:onPanelSpread()
+        if not self.embedded_controls and self.panel_info and self.panel_info.view=='free' then
+            return self:_action('zoom_panel',1.25)
+        end
+        return true
+    end
+    function Page:onPanelPinch()
+        if not self.embedded_controls and self.panel_info and self.panel_info.view=='free' then
+            return self:_action('zoom_panel',0.8)
+        end
         return true
     end
 
@@ -496,9 +586,13 @@ function NativeReader:show(model)
         self:_dispose_embedded_controls()
         self:_release_controls()
         if self.image and type(self.image.free) == "function" then pcall(self.image.free, self.image) end
+        if self.whole_image then pcall(self.whole_image.free,self.whole_image);self.whole_image=nil end
         return true
     end
-    function Page:onCloseWidget() return self:release() end
+    function Page:onCloseWidget()
+        if not self.released then self:_action('reader_closed') end
+        return self:release()
+    end
 
     function Page:onSuspend()
         self.suspended = true
@@ -548,6 +642,10 @@ function NativeReader:show(model)
                     h = math.max(1, math.ceil(height * 0.2)),
                 } } },
             Swipe = { dependencies.gesture_range:new{ ges = "swipe", range = range } },
+            Hold = { dependencies.gesture_range:new{ ges='hold',range=range } },
+            PanelPan = { dependencies.gesture_range:new{ ges='pan_release',range=range } },
+            PanelSpread = { dependencies.gesture_range:new{ ges='spread',range=range } },
+            PanelPinch = { dependencies.gesture_range:new{ ges='pinch',range=range } },
         }
         page.page_gestures = page.ges_events
     end

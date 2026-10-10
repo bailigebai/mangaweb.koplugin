@@ -83,6 +83,21 @@ local function setup(existing_reader)
     return adapter,reader,page,session,store,settings,paint,cleanup,raw
 end
 
+test('panel displays count once per logical view and restoring whole page preserves count',function()
+    local adapter,reader,page,session,store,settings,paint,cleanup,raw=setup()
+    session.refresh_preferences:setEnabled(true)
+    session.refresh_preferences:setInterval(10)
+    session:settingsChanged();paint()
+    local a,b=raw:copy(),raw:copy()
+    local info={page_index=11,panel_id='first',index=1,count=2,view='context',rotation=0,zoom=1}
+    assert(adapter:show_panel(a,info));paint();eq(session.refresher.count,1)
+    assert(adapter:show_panel(a,info));paint();eq(session.refresher.count,1)
+    info.panel_id='second';info.index=2
+    assert(adapter:show_panel(b,info));paint();eq(session.refresher.count,2)
+    assert(adapter:detach_panel());paint();eq(session.refresher.count,2)
+    cleanup();a:free();b:free()
+end)
+
 test("source and real session default off ignore global true and failed save",function()
     local adapter,reader,page,session,store,settings,paint,cleanup=setup()
     eq(session.preferences:isEnabled(),false);eq(session.refresh_preferences:getEnabled(),false)
