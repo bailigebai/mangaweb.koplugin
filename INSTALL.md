@@ -1,5 +1,7 @@
 # MangaWeb 插件安装
 
+开发候选：`mangaweb-0.8.87.zip`，包含独立分格功能，尚未安装或发布。分格无需安装 WebDAVManga；灰度与全刷仍使用已启用的 GrayDither 服务。
+
 当前测试版安装包：`mangaweb-0.8.86.zip`，见 [v0.8.86 测试版](https://github.com/bailigebai/mangaweb.koplugin/releases/tag/v0.8.86)。10月10日已安装至连接的Kindle并完成回读校验；设备显示和实际网络表现仍待拔线重启后验收。
 
 历史发布：[v0.8.84 安装包与校验文件](https://github.com/bailigebai/mangaweb.koplugin/releases/tag/v0.8.84)。此次候选包包含跨首页/详情封面原图复用、后台文件传输、安全失败日志，以及0.8.85设置修复。现场0.8.84日志确认首图传输失败；由于旧日志缺少底层类别，具体原因尚待本版运行日志定位。
