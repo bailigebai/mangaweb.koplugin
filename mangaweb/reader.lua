@@ -144,6 +144,7 @@ function Reader:_profile(page, metadata, settings)
 end
 
 function Reader:_display(entry, wanted_segment)
+    if self.panels and not self.panels:before_page() then return false,'panel_display_busy' end
     local page = self.context.pages[entry.index] or {}
     local metadata = entry.metadata or {}
     local width = tonumber(metadata.width or page.width) or 1
@@ -174,6 +175,7 @@ function Reader:_display(entry, wanted_segment)
         pcall(self.page_cache.set_position, self.page_cache, self:_cache_identity(entry.index))
     end
     self:_prefetch_after(entry.index)
+    if self.panels then self.panels:page_displayed() end
     return true
 end
 
@@ -411,6 +413,7 @@ end
 
 function Reader:_move(direction)
     if self.closed then return false, "reader_closed" end
+    if self.panels and self.panels:move(direction) then return true end
     local position = self.position_detail or { index = self.position or 1, segment = "whole", pan_y = 0 }
     local entry = self.entries[position.index]
     if self.reader_settings.fit_mode == "width" and entry and entry.ready then
@@ -449,11 +452,13 @@ function Reader:previous() return self:_move(-1) end
 
 function Reader:go_to(index)
     if self.closed then return false, "reader_closed" end
+    if self.panels and not self.panels:close() then return false,'panel_display_busy' end
     return self:_request(clamp(index, 1, #self.context.pages))
 end
 
 function Reader:retry()
     if self.closed then return false, "reader_closed" end
+    if self.panels and not self.panels:close() then return false,'panel_display_busy' end
     if #self.context.pages == 0 and self.resolve_pages then
         if self.ui.show_page_loading then self.ui:show_page_loading(1, 0) end
         return self.resolve_pages()
@@ -511,6 +516,7 @@ function Reader:update_settings(changes)
         return true
     end
     if self.closed then return true end
+    if self.panels and not self.panels:close() then return false,'panel_display_busy' end
     self.processing_epoch = self.processing_epoch + 1
     self.generation = self.generation + 1
     local index = self.target or self.position or 1
@@ -559,6 +565,36 @@ function Reader:update_settings(changes)
 end
 
 function Reader:settings_snapshot() return copy(self.reader_settings) end
+
+function Reader:panel_settings_snapshot()
+    if self.panel_preferences and self.context then
+        return self.panel_preferences:for_comic(self.context.site_id,self.context.comic_id)
+    end
+    return {enabled=false,view='context',rotation=0,order='follow',navigation='horizontal',
+        reverse_navigation=false,show_adjacent=true,margin_percent=0}
+end
+
+function Reader:panel_context()
+    local entry=self.position and self.entries[self.position]
+    if self.closed or self.target~=self.position or not entry or not entry.ready then
+        return nil,'panel_page_unavailable'
+    end
+    if not self.ui.panel_snapshot then return nil,'panel_display_unavailable' end
+    local snapshot=self.ui:panel_snapshot()
+    if not snapshot or not snapshot.buffer then return nil,'panel_display_unavailable' end
+    return {entry=entry,raw_path=entry.raw_path or entry.path,generation=self.generation,
+        position=copy(self.position_detail),buffer=snapshot.buffer,width=snapshot.width,height=snapshot.height}
+end
+
+function Reader:enter_panel_mode(desired)
+    if not self.panels then
+        self.panels=require('mangaweb.reader_panels'):new{reader=self,ui=self.ui}
+    end
+    return self.panels:enter(desired)
+end
+function Reader:exit_panel_mode() return not self.panels or self.panels:exit(true) end
+function Reader:pan_panel(dx,dy) return self.panels and self.panels:pan(dx,dy) or false end
+function Reader:zoom_panel(factor) return self.panels and self.panels:zoom(factor) or false end
 
 function Reader:preview_filter(kind, preset, callbacks)
     callbacks = callbacks or {}
@@ -613,6 +649,7 @@ end
 
 function Reader:close(reason)
     if self.closed then return true end
+    if self.panels and not self.panels:close() then return false,'panel_display_busy' end
     self.closed = true
     self.generation = self.generation + 1
     self:_cancel_watchdog()
