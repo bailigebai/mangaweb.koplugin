@@ -7,11 +7,25 @@ local definitions = { list = function() return {
         detail_cover = 'src="(.-)"', page_image = 'src="(.-)"',
     } },
 } end, zero_origin = function() return "https://zero.example.com" end }
-local sources = App.build_sources{ definitions = definitions, auth = {}, http = {} }
+local settings = { read = function(_, key, fallback) return fallback end }
+local sources = App.build_sources{ definitions = definitions, auth = {}, http = {}, settings = settings,
+    bilibili_scheduler = { after = function() return {cancel=function() end} end } }
 assert(sources.zero and sources.zero.origin == "https://zero.example.com")
+assert(sources.bilibili and sources.bilibili:meta().name == "哔哩哔哩漫画",
+    "the built-in site list must include Bilibili without a custom definition")
 assert(sources["custom-1"] and sources["custom-1"]:meta().name == "自定义")
 assert(sources.nhentai == nil and sources.wnacg == nil,
-    "the normal site list must contain only Zero and user-created sites")
+    "WNACG and nhentai must not be preinstalled")
+local Registry = require("mangaweb.source_registry")
+local saved = { active_site = "custom-1" }
+local registry = Registry:new{sources=sources, settings={
+    read=function(_,key,fallback)return saved[key] or fallback end,
+    write=function(_,key,value)saved[key]=value end}}
+assert(registry:current_id()=="custom-1", "adding a built-in site must preserve the selected site")
+assert(not registry:remove("bilibili"), "Bilibili must not be removed as a custom site")
+assert(registry:switch("bilibili") and saved.active_site=="bilibili")
+assert(Registry:new{sources=sources,settings=registry.settings}:current_id()=="bilibili")
+assert(sources.bilibili.account_auth:model().state=="idle")
 
 local runtime_ui, reader_loader = {}, { max_active = 2 }
 local app=App:new{source_registry={},http={},temp_files={new_session=function()return{}end},

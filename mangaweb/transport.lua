@@ -176,6 +176,7 @@ local function absolute_redirect(base_url, location)
 end
 
 local function redirect_request(request, status, headers)
+    if request.follow_redirects==false then return nil end
     local method = tostring(request.method or "GET"):upper()
     if method ~= "GET" or not status
         or (status ~= 301 and status ~= 302 and status ~= 303 and status ~= 307 and status ~= 308) then

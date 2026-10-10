@@ -2,6 +2,6 @@ local _ = require("gettext")
 
 return {
     fullname = _("漫画网站"),
-    description = _([[浏览 Zero 与自定义漫画站点，并逐页阅读。]]),
-    version = "0.8.88",
+    description = _([[浏览 Zero、自定义站点与哔哩哔哩首页新作。哔哩哔哩章节阅读暂不可用。]]),
+    version = "0.8.89",
 }

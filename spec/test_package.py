@@ -44,6 +44,13 @@ class PackageTests(unittest.TestCase):
         package.build_package(self.root, self.output)
         self.assertEqual(before, self.output.read_bytes())
 
+    def test_builtin_bilibili_can_load_from_the_public_archive(self):
+        package.build_package(self.root, self.output)
+        with zipfile.ZipFile(self.output) as archive:
+            for name in ("sources/bilibili.lua", "bilibili_api.lua", "bilibili_auth.lua",
+                         "bilibili_session.lua", "ui/bilibili_account.lua"):
+                self.assertIn("mangaweb.koplugin/mangaweb/" + name, archive.namelist())
+
     def test_missing_runtime_file_fails_before_output(self):
         (self.root / "mangaweb/graydither_bridge.lua").unlink()
         with self.assertRaises(FileNotFoundError):

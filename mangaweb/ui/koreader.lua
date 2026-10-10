@@ -895,6 +895,10 @@ function Adapter:_build_panel(model, existing)
                 callback = function() return self:_show_zero_origin_input(model) end }
         end
         panel.actions = {}
+        if actions.bilibili_account then
+            if model.account then panel.rows[#panel.rows+1]={kind='info',text='昵称：'..model.account.name..'；UID：'..model.account.uid} end
+            panel.rows[#panel.rows+1]={kind='action',text='哔哩哔哩账号／扫码登录',callback=actions.bilibili_account}
+        else
         if actions.login then
             panel.rows[#panel.rows + 1] = { kind = "section", text = "账号登录" }
             panel.rows[#panel.rows + 1] = { kind = "action", text = "登录并验证",
@@ -922,6 +926,7 @@ function Adapter:_build_panel(model, existing)
         if actions.test_connection then
             panel.rows[#panel.rows + 1] = { kind = "action", text = "测试连接",
                 callback = actions.test_connection }
+        end
         end
         panel.actions[#panel.actions + 1] = { text = "返回站点中心", callback = actions.back }
         if actions.close then panel.actions[#panel.actions + 1] = {
@@ -1363,7 +1368,9 @@ function Adapter:_items_for(model)
             text = "修改域名: " .. tostring(model.origin or ""),
             callback = function() return self:_show_zero_origin_input(model) end,
         } end
-        if actions.login then
+        if actions.bilibili_account then
+            items[#items+1]={text='哔哩哔哩账号／扫码登录',callback=actions.bilibili_account}
+        elseif actions.login then
             items[#items + 1] = { text = "账号密码登录并验证", callback = function() return self:_show_login_input(model) end }
         elseif model.cookie_only then
             items[#items + 1] = { text = "该站点需要浏览器 Cookie", enabled = false }
@@ -1730,6 +1737,16 @@ function Adapter:_show_filter_picker(title, loader, choose)
         manager:show(self.filter_picker)
         return true
     end)
+end
+
+function Adapter:close_bilibili_account()
+    if self.bilibili_account then self.bilibili_account:close();self.bilibili_account=nil end
+    return true
+end
+function Adapter:show_bilibili_account(auth,return_to)
+    self:close_bilibili_account()
+    self.bilibili_account=require('mangaweb.ui.bilibili_account'):new{adapter=self,auth=auth,return_to=return_to}
+    return self.bilibili_account:show()
 end
 
 function Adapter:_show_login_input(model)

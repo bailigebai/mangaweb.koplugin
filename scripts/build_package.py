@@ -9,7 +9,7 @@ import zlib
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# Reviewed public 0.8.83 runtime inventory plus the optional integration bridge.
+# Explicit public runtime inventory, including the Bilibili homepage preview.
 # Keep this explicit: recursive collection could include user settings or keys.
 RUNTIME_FILES = (
     "INSTALL.md",
@@ -20,6 +20,9 @@ RUNTIME_FILES = (
     "mangaweb/app.lua",
     "mangaweb/async.lua",
     "mangaweb/auth.lua",
+    "mangaweb/bilibili_api.lua",
+    "mangaweb/bilibili_auth.lua",
+    "mangaweb/bilibili_session.lua",
     "mangaweb/catalogue_cache.lua",
     "mangaweb/cover_loader.lua",
     "mangaweb/cover_prefetch.lua",
@@ -67,6 +70,7 @@ RUNTIME_FILES = (
     "mangaweb/site_manager.lua",
     "mangaweb/source_registry.lua",
     "mangaweb/sources/base.lua",
+    "mangaweb/sources/bilibili.lua",
     "mangaweb/sources/custom.lua",
     "mangaweb/sources/zero.lua",
     "mangaweb/sources/zero_favorites.lua",
@@ -76,6 +80,7 @@ RUNTIME_FILES = (
     "mangaweb/transport.lua",
     "mangaweb/turbo_client.lua",
     "mangaweb/ui/browse.lua",
+    "mangaweb/ui/bilibili_account.lua",
     "mangaweb/ui/button_style.lua",
     "mangaweb/ui/category_shelf.lua",
     "mangaweb/ui/cover_grid.lua",

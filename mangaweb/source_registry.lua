@@ -83,7 +83,7 @@ function Registry:register(site_id, source)
 end
 
 function Registry:remove(site_id)
-    if site_id == "zero" or not self.sources[site_id] then return false, "unknown_site" end
+    if site_id == "zero" or site_id == "bilibili" or not self.sources[site_id] then return false, "unknown_site" end
     self.sources[site_id], self.states[site_id] = nil, nil
     self.ids_list = ordered_ids(self.sources)
     if self.active_id == site_id then

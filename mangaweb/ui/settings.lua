@@ -99,6 +99,8 @@ function Settings:close()
     self:_next_request()
     self.busy = false
     self:_cancel_request()
+    if self.source and self.source.account_auth and self.shell and self.shell.ui
+        and self.shell.ui.close_bilibili_account then self.shell.ui:close_bilibili_account() end
     return true
 end
 
@@ -112,6 +114,20 @@ function Settings:publish(model, request_token)
 end
 
 function Settings:_model(state, extra)
+    if self:capabilities().qr_login and self.source.account_auth then
+        local account=self.source.account_auth:model()
+        local meta=self.source:meta()
+        return {page='settings',state=account.state,user_message=account.status,site_id=self:site_id(),
+            site_name=meta.name,origin=meta.origin,account=account.account,qr_login=true,actions={
+                bilibili_account=function()
+                    return self.shell.ui:show_bilibili_account(self.source.account_auth,function()
+                        if self:_is_current() then self:show() end
+                    end)
+                end,
+                back=function() return self.shell:show('site_center') end,
+                close=function() return self.shell:close() end,
+            }}
+    end
     local cookie = self:cookie()
     local credentials = self:credentials()
     local capabilities = self:capabilities()

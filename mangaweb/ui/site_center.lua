@@ -32,6 +32,11 @@ function SiteCenter:show()
             or self.auth and self.auth.cookie and self.auth:cookie(site_id) or ""
         local has_cookie = cookie ~= ""
         local connected = has_cookie and source and source.session_verified == true or false
+        if capabilities.qr_login and source.account_auth then
+            local account=source.account_auth:model()
+            has_cookie=account.account~=nil
+            connected=has_cookie and account.verified==true
+        end
         local status_code = connected and "connected" or has_cookie and "session_unverified" or "not_configured"
         sites[#sites + 1] = {
             id = site_id,

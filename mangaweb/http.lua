@@ -116,6 +116,7 @@ function Http:request(spec, callbacks)
         binary = spec.binary,
         ui_nonblocking = spec.ui_nonblocking,
         no_replay = spec.no_replay,
+        follow_redirects = spec.follow_redirects,
     }
     local function finish(status, headers, body, err)
         self:_finish(request, status, headers, body, err)

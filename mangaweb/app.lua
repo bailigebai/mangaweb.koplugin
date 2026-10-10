@@ -16,6 +16,12 @@ function App.build_sources(options)
     local Custom = require("mangaweb.sources.custom")
     local sources = { zero = Zero:new{ http = options.http, auth = options.auth,
         logger = options.logger, origin = definitions:zero_origin() } }
+    local api = require("mangaweb.bilibili_api"):new{http=options.http,
+        json=options.bilibili_json,logger=options.logger}
+    local session = require("mangaweb.bilibili_session"):new{settings=options.settings or definitions.settings}
+    local account_auth = require("mangaweb.bilibili_auth"):new{api=api,session=session,
+        scheduler=options.bilibili_scheduler,logger=options.logger}
+    sources.bilibili = require("mangaweb.sources.bilibili"):new{api=api,account_auth=account_auth}
     for _, definition in ipairs(definitions:list()) do
         sources[definition.id] = Custom:new{
             definition = definition, http = options.http, auth = options.auth,
@@ -141,7 +147,8 @@ local function default_runtime(options)
     end
     local Reader = require("mangaweb.reader")
     local sources = options.sources or App.build_sources{
-        definitions = definitions, http = http, auth = auth, logger = logger,
+        definitions = definitions, http = http, auth = auth, logger = logger,settings=settings,
+        bilibili_scheduler=options.bilibili_scheduler,bilibili_json=options.bilibili_json,
     }
     if auth.origins then
         for site_id, source in pairs(sources) do auth.origins[site_id] = source.origin end

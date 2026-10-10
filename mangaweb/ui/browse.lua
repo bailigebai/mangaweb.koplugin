@@ -83,7 +83,7 @@ function Browse:_options(overrides)
     end
     state.page = math.max(1, math.floor(tonumber(state.page) or 1))
     return { page = state.page, query = state.query, category = state.category,
-        tag = state.tag, sort = state.sort }
+        tag = state.tag, sort = state.sort, refresh = overrides and overrides.refresh == true }
 end
 
 function Browse:_actions()
@@ -98,8 +98,8 @@ function Browse:_actions()
         apply_channel = function(channel_id) return self:apply_channel(channel_id) end,
         next_page = function() return self:next_page() end,
         previous_page = function() return self:previous_page() end,
-        refresh = function() return self:load(self.shell:registry_state()) end,
-        retry = function() return self:load(self.shell:registry_state()) end,
+        refresh = function() return self:load{refresh=true} end,
+        retry = function() return self:load{refresh=true} end,
         relogin = function() return self.shell:show_settings(self.source.id) end,
         site_center = function() return self.shell:show("site_center") end,
         close = function() return self.shell:close() end,

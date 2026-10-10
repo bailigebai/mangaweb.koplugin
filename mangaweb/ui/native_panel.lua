@@ -34,6 +34,7 @@ function NativePanel:show(model)
     if not section_ok or not section_face then section_face = body_face end
     local PanelWidget = d.input_container:extend{
         modal = model.modal == true, fullscreen = true, covers_fullscreen = true,
+        stop_events_propagation=model.modal==true,
     }
     local Button = ButtonStyle.extend(d.button, d.screen, d.blitbuffer)
 
@@ -96,6 +97,8 @@ function NativePanel:show(model)
                 content[#content + 1] = command(row, width)
             elseif row.kind == "actions" then
                 content[#content + 1] = command_row(row.items)
+            elseif row.kind=='widget' and row.widget then
+                content[#content+1]=row.widget
             end
         end
         local actions = model.actions or {}
