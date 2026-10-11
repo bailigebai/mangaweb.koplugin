@@ -16,6 +16,25 @@ local function canceled_handle()
     return { cancel = function() return true end }
 end
 
+local function file_download_url(job)
+    local url = job.url
+    local code = job.raw.last_file_error
+    -- Keep the existing two-attempt budget and cache identity. Some networks
+    -- reject the public CDN's HTTP connection while its HTTPS endpoint works.
+    -- This is an upgrade for Zero's known, anonymous CDN only; never replay
+    -- an account request, an HTTP permission rejection, or downgrade TLS.
+    if job.raw.attempts ~= 2 or job.site_id ~= "zero"
+        or (code ~= "transport_error" and code ~= "request_timeout")
+        or not url:match("^http://tupa%.zerobyw33%.com/") or url:find("[%c]") then
+        return url
+    end
+    for name in pairs(job.headers or {}) do
+        name = tostring(name):lower()
+        if name == "cookie" or name == "authorization" then return url end
+    end
+    return "https:" .. url:sub(6)
+end
+
 local function cache_raw_key(job)
     local parts = { job.url }
     for _, key in ipairs({ "site_id", "comic_id", "chapter_id", "index", "url" }) do
@@ -174,6 +193,7 @@ function ImageLoader:_start_file(job)
             self:_log(job, "file_error", type(err) == "table" and err.code)
             self:_stop_worker(job)
             if raw.attempts < 2 then
+                raw.last_file_error = type(err) == "table" and err.code or nil
                 self:_enqueue(job)
                 return self:_pump()
             end
@@ -182,7 +202,9 @@ function ImageLoader:_start_file(job)
         end
         self:_process(job)
     end
-    local ok, operation = pcall(self.http.get_file, self.http, job.url, {
+    local download_url = file_download_url(job)
+    if download_url ~= job.url then self:_log(job, "https_recovery") end
+    local ok, operation = pcall(self.http.get_file, self.http, download_url, {
         path = part, headers = job.headers, site_id = job.site_id,
         stage = job.stage, expected_bytes = job.expected_bytes,
     }, {

@@ -398,7 +398,10 @@ function Transport:_request_sync(request, done)
             return active_socket
         end
     end
-    local returned = { pcall(client.request, request_options) }
+    -- LuaSec mutates the table (URL, TLS fields and its private create hook).
+    -- Keep the template pristine so a recovery request is accepted as a fresh
+    -- call rather than rejected as a caller-supplied TLS socket creator.
+    local returned = { pcall(client.request, copy(request_options)) }
     local ok = returned[1]
     local result, code, response_headers, status = returned[2], returned[3], returned[4], returned[5]
     if type(result) == "table" then

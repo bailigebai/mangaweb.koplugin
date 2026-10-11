@@ -43,4 +43,19 @@ client.request = function(options)
 end
 transport:_request_sync({url='https://zero.example/list',method='GET'},function(_,_,value) body=value end)
 assert(attempts == 2 and body == 'read-only body')
+
+-- Match the connected Kindle's LuaSec 1.3.2 side effect: table requests
+-- gain a private create function, but the next call rejects that field.
+attempts, body = 0, nil
+client.request = function(options)
+    if options.create then return nil, 'create function not permitted' end
+    attempts = attempts + 1
+    options.create = function() end
+    if attempts == 2 then options.sink('recovered chapter HTML') end
+    return 1, 200, {}
+end
+transport:_request_sync({url='https://zero.example/chapter',method='GET',
+    headers={Cookie='zero_auth=test'}},function(_,_,value) body=value end)
+assert(body == 'recovered chapter HTML' and attempts == 2,
+    'LuaSec mutation must not poison the next chapter recovery request')
 print('official_transport_spec: passed')
