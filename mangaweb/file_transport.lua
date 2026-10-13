@@ -88,6 +88,8 @@ function FileTransport.request(transport, request, part_path, callbacks)
             notify(logger.warn, "MangaWeb file download", "site", token(request.site_id),
                 "stage", token(request.stage), "status", tonumber(result.status) or 0,
                 "error", token(result.error), "cause", token(result.cause or result.error),
+                "phase", token(result.phase), "bytes", tonumber(result.bytes) or observed,
+                "scheme", token(tostring(request.url or ""):match("^(https?)://")),
                 "elapsed_ms", math.max(0, math.floor((clock() - started) * 1000)))
         end
         notify(callbacks.on_done, result)
@@ -137,7 +139,7 @@ function FileTransport.request(transport, request, part_path, callbacks)
             finish({ error = "background_request_failed" })
         else
             finish({ status = result.status, headers = result.headers or {},
-                bytes = result.bytes, error = result.error, cause = result.cause,
+                bytes = result.bytes, error = result.error, cause = result.cause, phase = result.phase,
                 path = not result.error and part_path or nil })
         end
         -- Normal Async completion is already reaped. Timeout/failure may
@@ -151,6 +153,7 @@ function FileTransport.request(transport, request, part_path, callbacks)
             client_for = function(url) return transport:_client(url) end,
             open_file = transport.open_file,
             socketutil = transport.socketutil,
+            http_client = transport.http,
             redirect_request = function(current, status, headers)
                 return transport:redirect_request(current, status, headers)
             end,

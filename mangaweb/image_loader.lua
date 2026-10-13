@@ -361,6 +361,36 @@ function ImageLoader:_enqueue(job)
     end)
 end
 
+function ImageLoader:promote(generation, key)
+    local session = self.sessions[generation]
+    local job = session and not session.canceled and session.jobs_by_key[key]
+    if not job or job.canceled or job.dropped then return false end
+    if job.result then return true end
+    job.priority = 1
+    table.sort(self.queue, function(a, b)
+        return a.priority < b.priority or (a.priority == b.priority and a.order < b.order)
+    end)
+    -- Reuse an active transfer; only a queued foreground page needs a slot.
+    if not job.active and self.active_count >= self.max_active then
+        local farthest, distance = nil, -1
+        local target = tonumber(job.index)
+        for _, active in pairs(session.jobs_by_key) do
+            if active ~= job and active.active and active.file_download
+                and not active.canceled and active.priority > 1
+                and active.raw_key ~= job.raw_key then
+                local active_index = tonumber(active.index)
+                local gap = target and active_index
+                    and math.abs(active_index - target) or active.order
+                if gap > distance then farthest, distance = active, gap end
+            end
+        end
+        if farthest then farthest.handle:cancel() end
+    end
+    self:_log(job, "foreground")
+    self:_pump()
+    return true
+end
+
 function ImageLoader:_process_impl(job)
     local raw = job.raw
     if job.canceled or job.session.canceled then return self:_failed(job) end
@@ -614,6 +644,7 @@ function ImageLoader:request(generation, spec, callbacks)
     if existing then
         if existing.result then self:_deliver(existing, callbacks)
         else existing.waiters[#existing.waiters + 1] = callbacks end
+        if tonumber(spec.priority) == 1 then self:promote(generation, spec.key) end
         return existing.handle
     end
     self.order = self.order + 1
@@ -669,21 +700,7 @@ function ImageLoader:request(generation, spec, callbacks)
     session.jobs_by_key[job.key] = job
     self:_log(job, "queued")
     self:_enqueue(job)
-    if job.priority == 1 and self.active_count >= self.max_active then
-        local farthest, distance = nil, -1
-        local target = tonumber(job.index)
-        for _, active in pairs(session.jobs_by_key) do
-            if active ~= job and active.active and active.file_download
-                and not active.canceled and active.priority > 1
-                and active.raw_key ~= job.raw_key then
-                local active_index = tonumber(active.index)
-                local gap = target and active_index
-                    and math.abs(active_index - target) or active.order
-                if gap > distance then farthest, distance = active, gap end
-            end
-        end
-        if farthest then farthest.handle:cancel() end
-    end
+    if job.priority == 1 then self:promote(generation, job.key) end
     self:_pump()
     return job.handle
 end

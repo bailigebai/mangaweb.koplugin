@@ -360,6 +360,55 @@ function NativeReader:show(model)
         }) or image
     end
 
+    function Page:prepare_pages(paths)
+        self.prepare_epoch = (self.prepare_epoch or 0) + 1
+        local epoch, manager = self.prepare_epoch, dependencies.ui_manager
+        if self.prepare_callback and manager and type(manager.unschedule) == "function" then
+            pcall(manager.unschedule, manager, self.prepare_callback)
+        end
+        self.prepare_callback = nil
+        self.prepared_images = self.prepared_images or {}
+        local wanted, queue = {}, {}
+        if not self.released then
+            for _, path in ipairs(paths or {}) do
+                if #queue < 2 and type(path) == "string" and path ~= "" and not wanted[path]
+                    and path ~= self.file then
+                    wanted[path] = true
+                    queue[#queue + 1] = path
+                end
+            end
+        end
+        for path, image in pairs(self.prepared_images) do
+            if not wanted[path] then
+                self.prepared_images[path] = nil
+                if type(image.free) == "function" then pcall(image.free, image) end
+            end
+        end
+        if not manager or type(manager.scheduleIn) ~= "function" then return true end
+        local function prepare_next()
+            if self.released or self.prepare_epoch ~= epoch then return end
+            self.prepare_callback = nil
+            if self.loading or self.suspended or self.embedded_controls then return end
+            while #queue > 0 do
+                local path = table.remove(queue, 1)
+                if path ~= self.file and not self.prepared_images[path] then
+                    local image = self:_new_image(path)
+                    if image then self.prepared_images[path] = image end
+                    break
+                end
+            end
+            if #queue > 0 then
+                self.prepare_callback = prepare_next
+                pcall(manager.scheduleIn, manager, 0.05, prepare_next)
+            end
+        end
+        if #queue > 0 then
+            self.prepare_callback = prepare_next
+            pcall(manager.scheduleIn, manager, 0.05, prepare_next)
+        end
+        return true
+    end
+
     function Page:_new_loading_surface()
         local white = dependencies.blitbuffer and dependencies.blitbuffer.COLOR_WHITE
         local placeholder = new_widget(dependencies.rect_span, {
@@ -379,7 +428,9 @@ function NativeReader:show(model)
         self.panel_restore_token=nil
         options = options or {}
         local next_total = math.max(1, math.floor(tonumber(total) or 1))
-        local next_image = self:_new_image(path)
+        local next_image = self.prepared_images and self.prepared_images[path]
+        if next_image then self.prepared_images[path] = nil end
+        next_image = next_image or self:_new_image(path)
         if not next_image then return false end
         local previous = self.image
         self.file = path
@@ -603,6 +654,7 @@ function NativeReader:show(model)
     function Page:release()
         if self.released then return true end
         self.released = true
+        self:prepare_pages({})
         if self.graydither_bridge then self.graydither_bridge:close() end
         self:_dispose_embedded_controls()
         self:_release_controls()
@@ -625,6 +677,7 @@ function NativeReader:show(model)
         if self.graydither_bridge and self:_graydither_ready() then self.graydither_bridge:resume() end
     end
     function Page:onSetDimensions()
+        self:prepare_pages({})
         if self.graydither_bridge then self.graydither_bridge:reset() end
     end
     function Page:onSetRotationMode() return self:onSetDimensions() end

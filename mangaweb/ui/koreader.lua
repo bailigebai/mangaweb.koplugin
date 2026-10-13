@@ -2493,6 +2493,11 @@ function Adapter:reader_viewport()
     return screen:getWidth(), screen:getHeight()
 end
 
+function Adapter:prepare_pages(paths)
+    local page = self.reader_widget
+    return page and type(page.prepare_pages) == "function" and page:prepare_pages(paths) or false
+end
+
 function Adapter:show_page(path, index, total, options)
     options = options or {}
     self.reader_loading = nil

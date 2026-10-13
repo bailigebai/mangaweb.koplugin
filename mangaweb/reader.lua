@@ -178,6 +178,7 @@ function Reader:_display(entry, wanted_segment)
         pcall(self.page_cache.set_position, self.page_cache, self:_cache_identity(entry.index))
     end
     self:_prefetch_after(entry.index)
+    self:_prepare_ahead()
     if self.panels then self.panels:page_displayed() end
     return true
 end
@@ -220,6 +221,12 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
         end)
     end
     if entry and entry.handle and not force then
+        if not is_prefetch and self.loader and type(self.loader.promote) == "function" then
+            if self.loader:promote(self.loader_generation, entry.key) == false then
+                self:_reject_entry(index, entry)
+                return self:_request(index, wanted_segment, false, false, true)
+            end
+        end
         watch_image(entry)
         return true
     end
@@ -246,6 +253,8 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
         if self.target == index then
             local shown = self:_display(entry, entry.segment)
             if shown == false then self:_reject_entry(index, entry) end
+        else
+            self:_prepare_ahead()
         end
         self:_evict()
         return true
@@ -288,6 +297,19 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
     end
     self:_show_error({ code = "http_unavailable" }, "image")
     return false, "loader_unavailable"
+end
+
+function Reader:_prepare_ahead()
+    if type(self.ui.prepare_pages) ~= "function" then return end
+    local paths = {}
+    if not self.closed and self.position and self.target == self.position then
+        local count = math.min(2, tonumber(self.reader_settings.preload_pages) or 0)
+        for index = self.position + 1, self.position + count do
+            local entry = self.entries[index]
+            if entry and entry.ready then paths[#paths + 1] = entry.path end
+        end
+    end
+    pcall(self.ui.prepare_pages, self.ui, paths)
 end
 
 function Reader:_prefetch_after(index)
@@ -515,10 +537,12 @@ function Reader:update_settings(changes)
                 self:_prefetch_after(self.position)
             end
             self:_evict()
+            self:_prepare_ahead()
         end
         return true
     end
     if self.closed then return true end
+    if type(self.ui.prepare_pages) == "function" then pcall(self.ui.prepare_pages, self.ui, {}) end
     if self.panels and not self.panels:close() then return false,'panel_display_busy' end
     self.processing_epoch = self.processing_epoch + 1
     self.generation = self.generation + 1

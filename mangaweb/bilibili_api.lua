@@ -70,8 +70,8 @@ function Api:_request(url,method,fields,cookie,parser,callbacks,decode_body)
 end
 -- The official homepage embeds public catalogue data. It does not require a
 -- signed comic RPC or an account cookie, and must never be parsed as JavaScript.
-function Api:homepage(callbacks)
-    return self:_request(MANGA..'/','GET',nil,nil,function(data)
+function Api:_context_page(url,cookie,callbacks)
+    return self:_request(url,'GET',nil,cookie,function(data)
         return type(data)=='table' and data or nil
     end,callbacks,function(body)
         local fragment
@@ -84,8 +84,20 @@ function Api:homepage(callbacks)
         if not fragment then return nil end
         local context=self.json.decode(fragment)
         if type(context)~='table' or type(context.data)~='table' then return nil end
-        return {code=0,data=context.data}
+        return {code=context.data.detailCode or 0,data=context.data}
     end)
+end
+function Api:homepage(callbacks)
+    return self:_context_page(MANGA..'/',nil,callbacks)
+end
+function Api:mobile_detail(comic_id,cookie,callbacks)
+    if type(comic_id)~='string' or #comic_id>16 or not comic_id:match('^[1-9]%d*$') then
+        if callbacks and callbacks.on_error then
+            callbacks.on_error(Models.error({code='parse_error'},'bilibili','detail'))
+        end
+        return {cancel=function()end}
+    end
+    return self:_context_page(MANGA..'/m/detail/mc'..comic_id,cookie,callbacks)
 end
 function Api:generate_qr(callbacks)
     return self:_request(PASSPORT..'/x/passport-login/web/qrcode/generate?source=main_web&go_url='..encode(MANGA..'/'),

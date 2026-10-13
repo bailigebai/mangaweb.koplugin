@@ -64,6 +64,50 @@ local function copy_headers(headers)
     return result
 end
 
+-- LuaSocket's protected request loses status/headers if its body pump fails.
+-- Observe only this synchronous child-process request, then restore the module.
+-- No request data or socket behavior is changed by these wrappers.
+local function observe_response(http, trace)
+    if not http or type(http.open) ~= "function" then return function() end end
+    local original = http.open
+    local function open(...)
+        trace.phase = "connect"
+        local connection = original(...)
+        if type(connection) ~= "table" then return connection end
+        for name, phase in pairs({ sendrequestline = "send_request",
+            sendheaders = "send_headers", receivebody = "receive_body" }) do
+            local method = connection[name]
+            if type(method) == "function" then
+                connection[name] = function(self, ...)
+                    trace.phase = phase
+                    return method(self, ...)
+                end
+            end
+        end
+        local receive_status = connection.receivestatusline
+        if type(receive_status) == "function" then
+            connection.receivestatusline = function(self, ...)
+                trace.phase = "receive_status"
+                local code, status = receive_status(self, ...)
+                trace.status = status_number(code)
+                return code, status
+            end
+        end
+        local receive_headers = connection.receiveheaders
+        if type(receive_headers) == "function" then
+            connection.receiveheaders = function(self, ...)
+                trace.phase = "receive_headers"
+                local headers, err = receive_headers(self, ...)
+                trace.headers = safe_headers(headers)
+                return headers, err
+            end
+        end
+        return connection
+    end
+    http.open = open
+    return function() if http.open == open then http.open = original end end
+end
+
 function FileSink.download(request, part_path, deps)
     request, deps = request or {}, deps or {}
     local limit = math.min(MAX_BYTES, tonumber(request.max_bytes) or MAX_BYTES)
@@ -84,7 +128,9 @@ function FileSink.download(request, part_path, deps)
             return { headers = {}, bytes = 0, error = "storage_error" }
         end
         local bytes, saw_chunk, sink_error, sink_cause = 0, false, nil, nil
+        local trace = { phase = "request" }
         local function sink(chunk, error_value)
+            if chunk ~= nil or error_value then trace.phase = "receive_body" end
             if error_value then
                 sink_error = "transport_error"
                 sink_cause = failure_cause(error_value)
@@ -121,24 +167,26 @@ function FileSink.download(request, part_path, deps)
         end
         local headers = copy_headers(current.headers)
         if headers["Accept-Encoding"] == nil then headers["Accept-Encoding"] = "identity" end
+        local restore = observe_response(deps.http_client or client, trace)
         local ok, result, code, response_headers, status = pcall(client.request, {
             url = current.url, method = "GET", headers = headers,
             redirect = false, sink = sink,
         })
+        restore()
         if socketutil and type(socketutil.reset_timeout) == "function" then
             pcall(socketutil.reset_timeout, socketutil)
         end
         local closed = close_file(file)
         local response_code = status_number(code) or status_number(status)
-            or status_number(result)
-        local filtered = safe_headers(response_headers)
+            or status_number(result) or trace.status
+        local filtered = response_headers and safe_headers(response_headers) or trace.headers or {}
         if sink_error or not closed then
             return { status = response_code, headers = filtered, bytes = bytes,
-                error = sink_error or "storage_error", cause = sink_cause }
+                error = sink_error or "storage_error", cause = sink_cause, phase = trace.phase }
         end
         if not ok or result == nil or not response_code then
             return { status = response_code, headers = filtered, bytes = bytes,
-                error = "transport_error", cause = failure_cause(not ok and result or code) }
+                error = "transport_error", cause = failure_cause(not ok and result or code), phase = trace.phase }
         end
         if response_code >= 300 and response_code < 400 then
             local accepted, redirected = pcall(deps.redirect_request or function() end,
