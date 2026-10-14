@@ -48,10 +48,16 @@ local function default_fs()
         return written ~= nil and closed ~= nil
     end
     function fs:size(path) return lfs.attributes(path, "size") end
+    function fs:stat(path)
+        local attrs=lfs.symlinkattributes and lfs.symlinkattributes(path) or lfs.attributes(path)
+        return attrs and {mode=attrs.mode,size=attrs.size,mtime=attrs.modification}
+    end
+    function fs:touch(path, now) if lfs.touch then return lfs.touch(path,now,now) end end
     function fs:rename(source, target) return os.rename(source, target) ~= nil end
     function fs:remove(path) return os.remove(path) ~= nil end
     function fs:list(root)
         local entries = {}
+        if lfs.symlinkattributes and lfs.symlinkattributes(root,"mode")=="link" then return entries end
         local success, iterator, state = pcall(lfs.dir, root)
         if not success then return entries end
         for name in iterator, state do
@@ -86,7 +92,8 @@ function PageCache:new(options)
     root = root:gsub("\\", "/"):gsub("/+$", "")
     local fs = options.fs or default_fs()
     if not fs then return nil end
-    local object = setmetatable({ root = root, fs = fs,
+    local object = setmetatable({ root = root, fs = fs, directory=directory,
+        clock=options.clock or os.time, access_times={}, access_serial=0, protection_revision=0,
         sha256 = options.sha256 or Crypto.sha256,
         upper_bytes = options.upper_bytes or 256 * 1048576,
         lower_bytes = options.lower_bytes or 192 * 1048576,
@@ -147,6 +154,8 @@ end
 function PageCache:sync_protected(owner, identities, replace)
     local scope = digest(self.sha256, owner)
     if not scope or not self:_ensure_dir() then return false end
+    self.protection_revision=self.protection_revision+1
+    self.maintenance_protected=nil
     local ok, entries = pcall(self.fs.list, self.fs, self.root)
     if not ok or type(entries) ~= "table" then return false end
     local existing, wanted = {}, {}
@@ -174,8 +183,8 @@ end
 
 function PageCache:_entries()
     local ok, entries = pcall(self.fs.list, self.fs, self.root)
-    if not ok or type(entries) ~= "table" then return {} end
-    local valid, protected = {}, {}
+    if not ok or type(entries) ~= "table" then return {},{},{},true end
+    local valid, protected, parts = {}, {}, {}
     for _, entry in ipairs(entries) do
         local name = type(entry) == "table" and entry.name
         local _, stem = marker(name)
@@ -190,9 +199,16 @@ function PageCache:_entries()
             valid[#valid + 1] = { path = self.root .. "/" .. name,
                 name = name, prefix = prefix, index = tonumber(number),
                 size = tonumber(entry.size) or 0, mtime = tonumber(entry.mtime) or 0 }
+        elseif entry.mode=="file" and self.directory=="catalogues"
+            and type(name)=="string" and name:match("^[0-9a-f]+%.json$") and #name==69 then
+            valid[#valid+1]={path=self.root.."/"..name,name=name,
+                size=tonumber(entry.size)or 0,mtime=tonumber(entry.mtime)or 0}
+        elseif entry.mode=="file" and type(name)=="string" and self.reservations[self.root.."/"..name] then
+            parts[#parts+1]={path=self.root.."/"..name,name=name,size=tonumber(entry.size)or 0,
+                mtime=tonumber(entry.mtime)or 0,part=true,protected=true}
         end
     end
-    return valid, protected
+    return valid, protected, parts
 end
 
 function PageCache:size_bytes()
@@ -204,7 +220,7 @@ end
 function PageCache:configure(upper_bytes, lower_bytes)
     upper_bytes, lower_bytes = tonumber(upper_bytes), tonumber(lower_bytes)
     if not upper_bytes or not lower_bytes or upper_bytes < 64 * 1048576
-        or upper_bytes > 2048 * 1048576 or lower_bytes < 0
+        or upper_bytes > 32768 * 1048576 or lower_bytes < 0
         or lower_bytes >= upper_bytes then return false end
     self.upper_bytes, self.lower_bytes = upper_bytes, lower_bytes
     return self:trim()
@@ -217,7 +233,7 @@ function PageCache:get(identity)
         local path = self.root .. "/" .. stem .. "." .. extension
         local ok, header = pcall(self.fs.read, self.fs, path, 12)
         if ok and type(header) == "string" then
-            if image_kind(header) == extension then return path end
+            if image_kind(header) == extension then self:mark_used(path);return path end
             pcall(self.fs.remove, self.fs, path)
         end
     end
@@ -350,6 +366,7 @@ function PageCache:publish(identity, part_path, reported_bytes)
 end
 
 function PageCache:trim()
+    if self.coordinator then self.needs_trim=false;return self.coordinator:request_check() end
     local entries, protected = self:_entries()
     protected = protected or {}
     local total = 0
@@ -382,6 +399,73 @@ function PageCache:trim()
     end
     self.needs_trim = total > self.lower_bytes
     return not self.needs_trim, self.needs_trim and "protected_limit" or nil
+end
+
+function PageCache:mark_used(path)
+    self.access_serial=self.access_serial+1
+    local previous=self.access_times[path]
+    local now=self.clock()
+    self.access_times[path]={time=now,serial=self.access_serial,touched=previous and previous.touched}
+    if self.fs.touch and (not previous or not previous.touched or now-previous.touched>=60) then
+        pcall(self.fs.touch,self.fs,path,now)
+        self.access_times[path].touched=now
+    end
+end
+
+function PageCache:maintenance_entries()
+    local entries,protected,parts,failed=self:_entries()
+    if failed then error("cache_scan_failed") end
+    self.maintenance_protected={revision=self.protection_revision,stems=protected}
+    local present={}
+    for _,entry in ipairs(entries)do
+        present[entry.path]=true
+        local stem=entry.name:match("^(.*)%.[^.]+$")
+        local current=self.current
+        entry.protected=not not (self.pins[stem] or protected[stem]
+            or current and entry.prefix==current.prefix and entry.index==current.index)
+        local access=self.access_times[entry.path]
+        entry.atime=access and access.time or entry.mtime
+        entry.access_version=access and access.serial or 0
+    end
+    for path in pairs(self.access_times)do if not present[path]then self.access_times[path]=nil end end
+    for _,entry in ipairs(parts or {})do entries[#entries+1]=entry end
+    return entries
+end
+
+function PageCache:clear_position()
+    self.current=nil
+end
+
+function PageCache:remove_entry(entry)
+    if type(entry)~="table" or type(entry.name)~="string"
+        or entry.path~=self.root.."/"..entry.name or entry.part then return false end
+    local prefix,index,hash,ext=entry.name:match("^([0-9a-f]+)_([0-9]+)_([0-9a-f]+)%.(%a+)$")
+    local image=prefix and #prefix==16 and #index==8 and #hash==64 and EXTENSIONS[ext]
+    local catalogue=self.directory=="catalogues" and #entry.name==69 and entry.name:match("^[0-9a-f]+%.json$")
+    if not image and not catalogue then return false end
+    local stem=entry.name:match("^(.*)%.[^.]+$")
+    if self.pins[stem] or self.current and self.current.prefix==prefix
+        and self.current.index==tonumber(index) then return false,"protected" end
+    local markers=self.maintenance_protected
+    if not markers or markers.revision~=self.protection_revision then
+        local _,protected=self:_entries()
+        markers={revision=self.protection_revision,stems=protected};self.maintenance_protected=markers
+    end
+    if markers.stems[stem] then return false,"protected" end
+    local access=self.access_times[entry.path]
+    if (access and access.serial or 0)~=(entry.access_version or 0) then return false,"changed" end
+    local attrs
+    if self.fs.stat then
+        local ok,value=pcall(self.fs.stat,self.fs,entry.path);if ok then attrs=value end
+    else
+        local ok,listed=pcall(self.fs.list,self.fs,self.root)
+        for _,item in ipairs(ok and listed or {})do if item.name==entry.name then attrs=item;break end end
+    end
+    if not attrs or attrs.mode~="file" or tonumber(attrs.size)~=entry.size
+        or tonumber(attrs.mtime)~=entry.mtime then return false,"changed" end
+    local ok,removed=pcall(self.fs.remove,self.fs,entry.path)
+    if ok and removed==true then self.access_times[entry.path]=nil;return true end
+    return false,"remove_failed"
 end
 
 return PageCache

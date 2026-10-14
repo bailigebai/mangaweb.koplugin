@@ -71,10 +71,52 @@ end
 function Auth:set_cookie(site_id, cookie)
     cookie = trim(cookie)
     if not valid_cookie(cookie) then return false, "invalid_cookie" end
-    self.settings:write("cookie:" .. tostring(site_id), cookie)
-    self.settings:write("cookie_origin:" .. tostring(site_id), self.origins[site_id] or "")
-    if self.settings.flush then self.settings:flush() end
+    local key, binding = "cookie:" .. tostring(site_id), "cookie_origin:" .. tostring(site_id)
+    local previous, previous_origin = self.settings:read(key), self.settings:read(binding)
+    local ok, saved = pcall(function()
+        if self.settings:write(key, cookie) == false then return false end
+        if self.settings:write(binding, self.origins[site_id] or "") == false then return false end
+        return not self.settings.flush or self.settings:flush() ~= false
+    end)
+    if not ok or saved == false then
+        pcall(self.settings.write, self.settings, key, previous)
+        pcall(self.settings.write, self.settings, binding, previous_origin)
+        if self.settings.flush then pcall(self.settings.flush,self.settings) end
+        return false, "cookie_save_failed"
+    end
     return true
+end
+
+-- A new login must prove its own session before replacing a saved account.
+function Auth:staged(site_id, origin)
+    local owner = self
+    local original = type(owner.cookie) == "function" and owner:cookie(site_id) or ""
+    local bound = owner.origins and owner.origins[site_id] or origin
+    local values = {}
+    local staged = Auth:new{origins={[site_id]=origin or bound}, settings={
+        read=function(_, key, fallback)
+            if values[key] ~= nil then return values[key] end
+            return fallback
+        end,
+        write=function(_, key, value) values[key]=value;return true end,
+        flush=function() return true end,
+    }}
+    local committed = false
+    local function commit()
+        if committed then return false, "login_unverified" end
+        if (type(owner.cookie)=="function" and owner:cookie(site_id) or "") ~= original
+            or (owner.origins and owner.origins[site_id] or origin) ~= bound then
+            return false, "login_unverified"
+        end
+        if type(owner.set_cookie) ~= "function" then return false, "http_unavailable" end
+        local cookie = staged:active_cookie(site_id)
+        if cookie == "" then return false, "login_unverified" end
+        local ok, saved = pcall(owner.set_cookie, owner, site_id, cookie)
+        if not ok or saved ~= true then return false, "login_unverified" end
+        committed = true
+        return true
+    end
+    return staged, commit
 end
 
 function Auth:clear(site_id)

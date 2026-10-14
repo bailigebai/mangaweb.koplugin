@@ -70,6 +70,7 @@ assert(files[source2] and ok==true and errors==0 and downloaded==3,
 -- Closing between cancellation and replacement must release the retained pin.
 loader:cancel_processing(reader.loader_generation,reader.entries[2].key)
 reader:close()
+assert(cache.current==nil,"closing a reader must release the last-page protection")
 assert(not next(cache.pins), "closing a reader must release unclaimed retention pins")
 assert(not next(loader.sessions), "closing must release the processing session")
 print("filter_cache_pressure_spec: passed")

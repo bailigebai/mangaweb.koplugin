@@ -37,6 +37,7 @@ function Http:new(options)
         active = {},
         next_id = 0,
         logger = options.logger,
+        network = options.network,
     }, self)
 end
 
@@ -69,7 +70,7 @@ function Http:_finish(request, status, headers, body, err)
     if err then
         local error_result = err
         if type(error_result) ~= "table" then
-            local code = error_result == "response_too_large" and "response_too_large" or "transport_error"
+            local code = error_result == "response_too_large" and "response_too_large" or Models.transport_code(error_result)
             error_result = error_value(code, request.stage, tostring(error_result))
         end
         self:_callback(request, "on_error", error_result)
@@ -121,19 +122,26 @@ function Http:request(spec, callbacks)
     local function finish(status, headers, body, err)
         self:_finish(request, status, headers, body, err)
     end
-    local ok, transport_handle = pcall(self.transport.request, self.transport, request_spec, finish)
-    if not ok then
-        self:_finish(request, nil, nil, nil, error_value("transport_error", request.stage))
-        return { cancel = function() end }
+    local function start()
+        if request.done or request.canceled then return end
+        local ok, transport_handle = pcall(self.transport.request, self.transport, request_spec, finish)
+        if not ok then
+            self:_finish(request, nil, nil, nil, error_value("transport_error", request.stage))
+        end
+        request.transport_handle = ok and transport_handle or nil
+        return request.transport_handle
     end
-    request.transport_handle = transport_handle
+    if self.network then
+        request.network_handle=self.network:run(start,function(err)self:_finish(request,nil,nil,nil,err)end)
+    else start() end
     local owner = self
     local public_handle = {}
     function public_handle:cancel()
         if request.done or request.canceled then return end
         request.canceled = true
         owner.active[request.id] = nil
-        if request.transport_handle and request.transport_handle.cancel then
+        if request.network_handle then request.network_handle:cancel()
+        elseif request.transport_handle and request.transport_handle.cancel then
             pcall(request.transport_handle.cancel, request.transport_handle)
         end
     end
@@ -213,6 +221,8 @@ function Http:get_file(url, options, callbacks)
         expected_bytes = options.expected_bytes, max_bytes = 64 * 1048576,
         connect_timeout = 15, idle_timeout = 30, total_timeout = 180,
         ui_nonblocking = true }
+    local function start()
+    if request.done or request.canceled then return end
     local ok, handle = pcall(self.transport.request_file, self.transport,
         request_spec, part_path, {
             on_done = complete,
@@ -231,12 +241,23 @@ function Http:get_file(url, options, callbacks)
         reaped()
     end
     request.transport_handle = ok and handle or nil
+    return request.transport_handle
+    end
+    if self.network then
+        request.network_handle=self.network:run(start,function(err)
+            fail(err.code or 'network_unavailable');reaped()
+        end)
+    else start() end
+    request.reap_waiting=reaped
     return {
         cancel = function()
             if request.canceled or request.done then return end
             request.canceled = true
             owner.active[request.id] = nil
-            if request.transport_handle and type(request.transport_handle.cancel) == "function" then
+            if request.network_handle then
+                request.network_handle:cancel()
+                if not request.transport_handle then reaped() end
+            elseif request.transport_handle and type(request.transport_handle.cancel) == "function" then
                 pcall(request.transport_handle.cancel, request.transport_handle)
             else
                 reaped()
@@ -269,7 +290,10 @@ function Http:cancel_all()
     for _, request in ipairs(requests) do
         request.canceled = true
         self.active[request.id] = nil
-        if request.transport_handle and request.transport_handle.cancel then
+        if request.network_handle then
+            request.network_handle:cancel()
+            if not request.transport_handle and request.reap_waiting then request.reap_waiting() end
+        elseif request.transport_handle and request.transport_handle.cancel then
             pcall(request.transport_handle.cancel, request.transport_handle)
         end
     end

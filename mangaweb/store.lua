@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS history(
     site_id TEXT NOT NULL, comic_id TEXT NOT NULL, title TEXT NOT NULL,
     author TEXT, cover_url TEXT, detail_url TEXT, page_index INTEGER NOT NULL,
     total_pages INTEGER NOT NULL, last_read_at INTEGER NOT NULL,
+    chapter_id TEXT NOT NULL DEFAULT '', chapter_title TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(site_id, comic_id)
 );
 ]]
@@ -75,6 +76,16 @@ function Store:new(options)
         clock = options.clock or os.time,
     }, self)
     object.database:exec(SCHEMA)
+    local columns = {}
+    for _, row in ipairs(object.database:query("PRAGMA table_info(history)") or {}) do
+        columns[row[2]] = true
+    end
+    for _, name in ipairs({ "chapter_id", "chapter_title" }) do
+        if not columns[name] then
+            assert(object.database:exec("ALTER TABLE history ADD COLUMN " .. name
+                .. " TEXT NOT NULL DEFAULT ''") ~= false, "history migration failed")
+        end
+    end
     return object
 end
 
@@ -225,28 +236,30 @@ end
 local function history_record(row)
     if not row then return nil end
     return { site_id = row[1], comic_id = row[2], title = row[3], author = row[4], cover_url = row[5],
-        detail_url = row[6], page_index = row[7], total_pages = row[8], last_read_at = row[9] }
+        detail_url = row[6], page_index = row[7], total_pages = row[8], last_read_at = row[9],
+        chapter_id = row[10] or "", chapter_title = row[11] or "" }
 end
 
 function Store:save_history(record)
     record = record or {}
     return self:_write(
-        "INSERT OR REPLACE INTO history (site_id,comic_id,title,author,cover_url,detail_url,page_index,total_pages,last_read_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO history (site_id,comic_id,title,author,cover_url,detail_url,page_index,total_pages,last_read_at,chapter_id,chapter_title) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         { text(record.site_id), text(record.comic_id), text(record.title), text(record.author),
             text(record.cover_url), text(record.detail_url), integer(record.page_index, 1),
-            integer(record.total_pages, 1), integer(record.last_read_at, self.clock()) })
+            integer(record.total_pages, 1), integer(record.last_read_at, self.clock()),
+            text(record.chapter_id), text(record.chapter_title) })
 end
 
 function Store:get_history(site_id, comic_id)
     return history_record(self:_query(
-        "SELECT site_id,comic_id,title,author,cover_url,detail_url,page_index,total_pages,last_read_at FROM history WHERE site_id=? AND comic_id=? LIMIT 1",
+        "SELECT site_id,comic_id,title,author,cover_url,detail_url,page_index,total_pages,last_read_at,chapter_id,chapter_title FROM history WHERE site_id=? AND comic_id=? LIMIT 1",
         { text(site_id), text(comic_id) })[1])
 end
 
 function Store:list_history(site_id)
     local result = {}
     for _, row in ipairs(self:_query(
-        "SELECT site_id,comic_id,title,author,cover_url,detail_url,page_index,total_pages,last_read_at FROM history WHERE site_id=? ORDER BY last_read_at DESC",
+        "SELECT site_id,comic_id,title,author,cover_url,detail_url,page_index,total_pages,last_read_at,chapter_id,chapter_title FROM history WHERE site_id=? ORDER BY last_read_at DESC",
         { text(site_id) })) do
         result[#result + 1] = history_record(row)
     end

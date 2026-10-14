@@ -3,6 +3,9 @@ local M = {}
 local ERROR_MESSAGES = {
     network_error = "网络连接失败，请检查网络后重试",
     transport_error = "网络传输失败，请重试",
+    dns_error = "域名解析失败，请确认 Wi-Fi 已连接后重试",
+    tls_error = "HTTPS 握手失败，请检查设备时间和网络",
+    network_unavailable = "尚未连接网络，请连接 Wi-Fi 后重试",
     http_error = "站点请求失败，请稍后重试",
     http_unavailable = "网络功能不可用",
     api_error = "站点暂时无法返回数据，请稍后重试",
@@ -24,6 +27,20 @@ local ERROR_MESSAGES = {
     favorite_remove_uncertain = "无法确认网页收藏是否已取消，请刷新官方收藏核对；不会自动重复取消",
 }
 
+function M.transport_code(value)
+    local message=tostring(value or ""):lower()
+    if message:find("name resolution",1,true) or message:find("host not found",1,true)
+        or message:find("getaddrinfo",1,true) or message:find("nodename nor servname",1,true) then
+        return "dns_error"
+    end
+    if message:find("timeout",1,true) or message:find("timed out",1,true) then return "request_timeout" end
+    if message:find("certificate",1,true) or message:find("handshake",1,true)
+        or message:find("ssl",1,true) or message:find("tls",1,true) then return "tls_error" end
+    if message:find("connection refused",1,true) or message:find("network is unreachable",1,true)
+        or message:find("could not connect",1,true) then return "network_error" end
+    return "transport_error"
+end
+
 function M.error(raw, site_id, stage, fallback)
     raw = type(raw) == "table" and raw or {}
     local function token(value, default)
@@ -41,6 +58,9 @@ function M.error(raw, site_id, stage, fallback)
         message = "图片超过 64 MiB，已停止下载"
     elseif code == "http_unavailable" and (safe_stage == "image" or safe_stage == "page") then
         message = "图片下载组件不可用，请重试或更新插件"
+    elseif code == "request_timeout" and (safe_stage == "login" or safe_stage == "login_form"
+        or safe_stage == "connection_test") then
+        message = "连接超时，请确认 Wi-Fi 已联网后重试"
     end
     return { site_id = token(site_id or raw.site_id), stage = safe_stage,
         code = code, status = tonumber(raw.status)

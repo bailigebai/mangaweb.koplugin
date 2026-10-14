@@ -14,14 +14,17 @@ local STATE_MESSAGES = {
     login_unverified = "会话已保存，尚未验证",
     ["invalid_cookie"] = "Cookie 格式无效",
     network_error = "网络连接失败",
-    transport_error = "HTTPS 连接失败，请检查时间和网络",
+    transport_error = "网络传输失败，请确认 Wi-Fi 已联网后重试",
+    dns_error = "域名解析失败，请确认 Wi-Fi 已连接后重试",
+    tls_error = "HTTPS 握手失败，请检查设备时间和网络",
+    network_unavailable = "尚未连接网络，请连接 Wi-Fi 后重试",
     http_error = "站点返回错误",
     http_unavailable = "网络功能不可用",
     verification_required = "需要先在浏览器完成验证",
     parse_error = "站点页面已变化，无法识别",
     empty_result = "站点返回空内容",
     response_too_large = "站点响应过大",
-    request_timeout = "章节请求超时，请重试",
+    request_timeout = "连接超时，请确认 Wi-Fi 已联网后重试",
 }
 
 local function safe_error(value, site_id, stage, fallback)

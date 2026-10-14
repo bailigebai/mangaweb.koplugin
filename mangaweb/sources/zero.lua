@@ -469,7 +469,46 @@ end
 
 function Zero:login(credentials, callback)
     credentials, callback = credentials or {}, callback or {}
-    if self.auth and self.auth.clear then pcall(self.auth.clear, self.auth, self.id) end
+    local original, user_callback = self, callback
+    local staged, commit = require("mangaweb.auth").staged(self.auth or {}, self.id, self.origin)
+    local canceled, finished, handles = false, false, {}
+    local http = {}
+    local function issue(method, ...)
+        if canceled or finished then return {cancel=function()end} end
+        local args = {...}
+        local callbacks = args[#args]
+        local guarded = {}
+        for name, fn in pairs(callbacks) do
+            local handler = fn
+            guarded[name] = function(...)
+                if not canceled and not finished then return handler(...) end
+            end
+        end
+        args[#args] = guarded
+        local handle = original.http[method](original.http, unpack(args))
+        if type(handle)=="table" and type(handle.cancel)=="function" then
+            handles[#handles+1]=handle
+        end
+        return handle
+    end
+    function http:get(...) return issue("get", ...) end
+    function http:post_form(...) return issue("post_form", ...) end
+    self = setmetatable({auth=staged,http=http}, {__index=original})
+    local function fail(value)
+        if canceled or finished then return end
+        finished=true
+        if user_callback.on_error then return user_callback.on_error(value) end
+    end
+    callback = {
+        on_error=fail,
+        on_success=function(value)
+            if canceled or finished then return end
+            local saved, reason=commit()
+            if not saved then return fail(self:_result_error("login",reason)) end
+            finished=true
+            if user_callback.on_success then return user_callback.on_success(value) end
+        end,
+    }
     local login_url = self.origin .. "/Android/my/"
     local legacy_login_url = self.origin .. "/login.php?referer=%2FAndroid%2Fmy%2F&mobile=2"
     local anonymous_login_url = self.origin:gsub("^https:", "http:") .. "/Android/my/"
@@ -563,7 +602,12 @@ function Zero:login(credentials, callback)
             on_error = handlers.on_error,
         })
     end
-    return load_login_form(login_url, true, true)
+    load_login_form(login_url, true, true)
+    return {cancel=function()
+        if canceled or finished then return end
+        canceled=true
+        for _, handle in ipairs(handles) do pcall(handle.cancel,handle) end
+    end}
 end
 
 function Zero:test_connection(callback)

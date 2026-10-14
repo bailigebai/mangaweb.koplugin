@@ -122,7 +122,8 @@ local function default_runtime(options)
     end
     options.logger = logger
     local transport = require("mangaweb.transport"):new{ logger = logger }
-    local http = options.http or require("mangaweb.http"):new{ transport = transport, logger = logger }
+    local http = options.http or require("mangaweb.http"):new{ transport = transport, logger = logger,
+        network=require("mangaweb.network_gate"):new{} }
     local auth = options.auth or require("mangaweb.auth"):new{
         settings = settings, http = http,
         origins = { zero = definitions:zero_origin() },
@@ -183,7 +184,7 @@ function App:new(options)
     if not registry and next(sources) then
         registry = Registry:new{ sources = sources, settings = options.settings }
     end
-    return setmetatable({
+    local object=setmetatable({
         ui = options.ui,
         opened = false,
         site_id = options.site_id or "zero",
@@ -198,11 +199,24 @@ function App:new(options)
         loader = options.loader,
         cover_loader = options.cover_loader,
         catalogue_cache = options.catalogue_cache,
+        page_cache = options.page_cache or (options.loader and options.loader.page_cache),
+        cover_cache = options.cover_cache or (options.cover_loader and options.cover_loader.cache),
+        cache_manager = options.cache_manager,
         license = options.license,
         license_dialog = options.license_dialog,
         site_manager = options.site_manager,
         shell_object = nil,
     }, self)
+    if not object.cache_manager and object.settings and type(object.settings.cache_policy)=="function" then
+        local caches={}
+        for _,cache in pairs{object.page_cache,object.cover_cache,
+            object.catalogue_cache and object.catalogue_cache.storage}do
+            if type(cache)=="table" and type(cache.maintenance_entries)=="function" then caches[#caches+1]=cache end
+        end
+        if #caches>0 then object.cache_manager=require("mangaweb.cache_manager"):new{
+            caches=caches,settings=object.settings,scheduler=object.ui and object.ui.ui_manager} end
+    end
+    return object
 end
 
 function App:_remote_context(card)
@@ -244,6 +258,7 @@ function App:_remote_context(card)
 end
 
 function App:show()
+    if self.cache_manager then self.cache_manager:start() end
     if not self.registry then
         self.opened = true
         if self.ui and type(self.ui.show_fullscreen) == "function" then self.ui:show_fullscreen(self) end
@@ -275,6 +290,7 @@ function App:show()
         site_manager = self.site_manager,
         on_close = function() return self:close() end,
         catalogue_cache = self.catalogue_cache,
+        cache_manager = self.cache_manager,
         on_start_reading = function(card, reader_context)
             if not self.reader or type(self.reader.open) ~= "function" then
                 return false, "reader_unavailable"
@@ -305,6 +321,7 @@ end
 
 function App:close()
     self.opened = false
+    if self.cache_manager then self.cache_manager:stop() end
     if self.license_dialog and type(self.license_dialog.close) == "function" then
         pcall(self.license_dialog.close, self.license_dialog, "app_close")
     elseif self.license and type(self.license.cancel) == "function" then

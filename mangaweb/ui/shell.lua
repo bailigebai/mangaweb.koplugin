@@ -21,6 +21,7 @@ function Shell:new(options)
         auth = options.auth,
         http = options.http,
         catalogue_cache = options.catalogue_cache,
+        cache_manager = options.cache_manager,
         detail_cache = options.detail_cache or DetailCache:new{ keyer = options.catalogue_cache },
         reader = options.reader,
         license = options.license,
@@ -99,6 +100,11 @@ function Shell:show(page, options)
         return detail:show(options.card)
     end
     self.root_page, self.root_options = page, options
+    if page=="global_cache" and self.cache_manager then
+        self.cache_page=require("mangaweb.ui.cache_manager"):new{
+            manager=self.cache_manager,shell=self,view_token=token}
+        return self.cache_page:show()
+    end
     if page == "site_center" then
         self.site_center = SiteCenter:new{ source_registry = self.registry, auth = self.auth, shell = self,
             license = self.license, license_dialog = self.license_dialog,

@@ -805,7 +805,12 @@ function Adapter:_build_panel(model, existing)
         navigation = self:_navigation("sites"),
         on_close = function() return self:_confirm_exit() end,
     }
-    if model.page == "site_center" then
+    if model.page=="global_cache" then
+        local cache_panel=require("mangaweb.ui.cache_manager").panel(model,self)
+        cache_panel.navigation=panel.navigation
+        cache_panel.on_close=panel.on_close
+        panel=cache_panel
+    elseif model.page == "site_center" then
         panel.title = "我的 · 站点管理"
         panel.on_back = panel.on_close
         panel.rows = {}
@@ -832,6 +837,10 @@ function Adapter:_build_panel(model, existing)
                     end },
                 } }
             end
+        end
+        if actions.manage_cache then
+            panel.rows[#panel.rows+1]={kind="section",text="插件缓存管理"}
+            panel.rows[#panel.rows+1]={kind="action",text="容量与自动清理",callback=actions.manage_cache}
         end
         local license_text = model.license_status == "authorized" and "阅读授权 · 已激活"
             or model.license_status == "not_activated" and "阅读授权 · 未激活"
@@ -1184,6 +1193,13 @@ end
 
 function Adapter:_items_for(model)
     model = model or {}
+    if model.page=="global_cache" then
+        local panel=require("mangaweb.ui.cache_manager").panel(model,self)
+        local items={{text=panel.status,select_enabled=false}}
+        for _,row in ipairs(panel.rows)do items[#items+1]={text=row.text,select_enabled=false}end
+        for _,item in ipairs(panel.actions)do items[#items+1]=item end
+        return items
+    end
     local items = {
         { text = "退出插件", callback = function() return self:_confirm_exit() end },
         { text = "收藏", callback = function() return self.shell and self.shell:show("library") end },
@@ -1216,6 +1232,7 @@ function Adapter:_items_for(model)
                     end }
             end
         end
+        if actions.manage_cache then site_items[#site_items+1]={text="插件缓存管理",callback=actions.manage_cache}end
         site_items[#site_items + 1] = {
             text = model.license_status == "authorized" and "阅读授权 · 已激活"
                 or model.license_status == "not_activated" and "阅读授权 · 未激活"
@@ -2101,10 +2118,20 @@ function Adapter:_show_reader_panel(model)
     return true
 end
 
+function Adapter:show_chapter_status(state, error)
+    self.chapter_status = state == "loading" and "正在加载章节…"
+        or state == "error" and ("章节加载失败：" .. tostring(error and error.user_message or "请重试")) or nil
+    if state == "ready" then return self:_close_reader_controls() end
+    return self:_show_reader_controls()
+end
+
 function Adapter:_show_reader_controls(section)
     local manager, reader = self.ui_manager, self.reader
     if not manager or not reader then return false end
     section = section or "root"
+    if section=="cache" and self.shell and self.shell.cache_manager then
+        return require("mangaweb.ui.cache_manager").reader(self,reader,self.shell.cache_manager)
+    end
     if section=='panels' then
         if not self.reader_panels or self.reader_panels.reader~=reader or self.reader_panels.page~=self.reader_widget then
             self.reader_panels=require('mangaweb.ui.reader_panels'):new{adapter=self,reader=reader}
@@ -2278,6 +2305,18 @@ function Adapter:_show_reader_controls(section)
             table.insert(items, #items, item("授权密钥管理", manage_license))
         end
     end
+    if (section == "root" or section == "reading") and type(reader.chapter_state) == "function" then
+        local state = reader:chapter_state()
+        local function chapter_item(text, offset, enabled)
+            return {text=text,enabled=enabled and not state.busy,callback=function()
+                if self.reader ~= reader or reader.closed then return false end
+                close_controls()
+                return reader:switch_chapter(offset)
+            end}
+        end
+        table.insert(items,1,chapter_item("下一话",1,state.next))
+        table.insert(items,1,chapter_item("上一话",-1,state.previous))
+    end
     local navigation = {
         item(section == "root" and "跳转图片" or "← 返回设置", function()
             if section == "root" then
@@ -2290,8 +2329,8 @@ function Adapter:_show_reader_controls(section)
     }
     local model = {
         modal = true, title = title, rows = rows_from(items), navigation = navigation,
-        status = section == "preload" and "提前下载后续图片，完成后翻页直接读取缓存。默认3页。"
-            or nil,
+        status = self.chapter_status or (section == "preload"
+            and "提前下载后续图片，完成后翻页直接读取缓存。默认3页。" or nil),
         on_back = section == "root" and close_controls
             or function() return show_section("root") end,
         on_close = close_controls,

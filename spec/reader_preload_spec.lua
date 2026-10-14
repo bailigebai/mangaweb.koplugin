@@ -3,13 +3,16 @@ local Settings=require('mangaweb.settings')
 local saved={}
 local settings=Settings:new{store={readSetting=function(_,k,d)return saved[k] or d end,
     saveSetting=function(_,k,v)saved[k]=v;return true end,flush=function()return true end}}
-local requests,canceled,shown,loading={}, {},0,0
+local requests,canceled,shown,loading,promoted={}, {},0,0,{}
 local loader={begin_session=function()return 1 end,release=function()end,cancel_generation=function()end,
+    promote=function(_,generation,key) promoted[#promoted+1]={generation,key};return true end,
     request=function(_,_,spec,cb)
         requests[#requests+1]={spec=spec,cb=cb}
         return{cancel=function()canceled[spec.index]=true end}
     end}
-local ui={show_page=function()shown=shown+1;return true end,
+local prepared={}
+local ui={prepare_pages=function(_,paths) prepared=paths;return true end,
+    show_page=function()shown=shown+1;return true end,
     show_page_loading=function()loading=loading+1;return true end,close_reader=function()end}
 local reader=Reader:new{settings=settings,store={save_history=function()return true end},ui=ui,loader=loader}
 local context={site_id='zero',comic_id='a',chapter_id='c',pages={}}
@@ -17,6 +20,11 @@ for i=1,9 do context.pages[i]={url='https://img/'..i..'.jpg'}end
 assert(reader:open(context))
 requests[1].cb.on_ready{path='/first.jpg',metadata={width=600,height=800}}
 assert(#requests==4 and reader:current_page()==1)
+assert(reader:go_to(2))
+assert(#requests==4 and #promoted==1 and promoted[1][2]==reader.entries[2].key,
+    'turning to an unfinished preload must promote it without issuing a duplicate request')
+assert(reader:go_to(1))
+shown,loading=1,1
 local current,gen,epoch=reader.entries[1],reader.generation,reader.processing_epoch
 assert(reader:update_settings{preload_pages=5})
 assert(reader.entries[1]==current and reader.generation==gen and reader.processing_epoch==epoch,
@@ -25,9 +33,13 @@ assert(#requests==6 and shown==1 and loading==1, '3 to 5 must add only the two m
 assert(reader:update_settings{preload_pages=4})
 assert(canceled[6] and not canceled[1] and not canceled[2] and #requests==6)
 requests[2].cb.on_ready{path='/second.jpg',metadata={width=600,height=800}}
+assert(#prepared==1 and prepared[1]=='/second.jpg','download completion must prepare the next visible page')
+requests[4].cb.on_ready{path='/fourth.jpg',metadata={width=600,height=800}}
+assert(#prepared==1,'the third future page must remain on disk without occupying decode memory')
 assert(reader:go_to(2))
 assert(shown==2 and loading==1, 'a completed prefetched image must turn directly without showing loading')
 assert(reader:update_settings{preload_pages=0})
+assert(#prepared==0,'disabling preload must release prepared future images')
 assert(not reader.entries[3] and reader.entries[2] and reader.entries[1])
 assert(reader:go_to(8));local target=reader.entries[8]
 assert(reader:update_settings{preload_pages=5})

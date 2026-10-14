@@ -93,6 +93,7 @@ function Catalogue:get(key)
     if #body <= MAX_BYTES then decoded, value = pcall(self.json.decode, body) end
     local sanitized = decoded and clean(value)
     if not sanitized then self:invalidate(key) end
+    if sanitized and self.storage.mark_used then self.storage:mark_used(self.storage.root.."/"..key..".json") end
     return sanitized
 end
 
@@ -125,6 +126,7 @@ function Catalogue:put(key, result)
     for i = 1, #snapshots - self.max_entries do
         pcall(storage.fs.remove, storage.fs, storage.root .. "/" .. snapshots[i].name)
     end
+    if storage.coordinator then storage.coordinator:request_check() end
     return true
 end
 

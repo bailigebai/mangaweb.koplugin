@@ -9,7 +9,7 @@ local READER_DEFAULTS = {
     gray_enabled = false, gray_preset = "original",
     tone_enabled = false, tone_preset = "original",
     gray_custom_presets = {}, tone_custom_presets = {},
-    cache_upper_mb = 256, cache_lower_mb = 192,
+    cache_upper_mb = 256, cache_lower_mb = 192, cache_check_minutes = 10,
     graydither_enabled = false, graydither_refresh_enabled = false,
     graydither_refresh_interval = 5, graydither_refresh_mode = "native",
     graydither_refresh_hold = 0.30,
@@ -55,9 +55,11 @@ local function invalid_reader_field(values)
         return "invalid_tone_preset"
     end
     if not is_integer(values.cache_upper_mb) or values.cache_upper_mb < 64
-        or values.cache_upper_mb > 2048 then return "invalid_cache_upper_mb" end
+        or values.cache_upper_mb > 32768 then return "invalid_cache_upper_mb" end
     if not is_integer(values.cache_lower_mb) or values.cache_lower_mb < 0
         or values.cache_lower_mb >= values.cache_upper_mb then return "invalid_cache_lower_mb" end
+    if not is_integer(values.cache_check_minutes) or values.cache_check_minutes < 1
+        or values.cache_check_minutes > 1440 then return "invalid_cache_check_minutes" end
     if type(values.graydither_enabled) ~= "boolean" then return "invalid_graydither_enabled" end
     if type(values.graydither_refresh_enabled) ~= "boolean" then return "invalid_graydither_refresh_enabled" end
     if not is_integer(values.graydither_refresh_interval) or values.graydither_refresh_interval < 1
@@ -91,9 +93,9 @@ local function normalize_reader(values, strict)
             probe.tone_custom_presets = normalized.tone_custom_presets
             local invalid = invalid_reader_field(probe)
             if key == "cache_upper_mb" then
-                invalid = not is_integer(candidate) or candidate < 64 or candidate > 2048
+                invalid = not is_integer(candidate) or candidate < 64 or candidate > 32768
             elseif key == "cache_lower_mb" then
-                invalid = not is_integer(candidate) or candidate < 0 or candidate >= 2048
+                invalid = not is_integer(candidate) or candidate < 0 or candidate >= 32768
             end
             if invalid then
                 normalized[key] = default
@@ -151,12 +153,46 @@ function Settings:set_site_filters(site_id, filters)
 end
 
 function Settings:flush()
+    -- KOReader LuaSettings:flush returns self even if writeToFile failed.
+    -- Stage and verify the same serialized format before replacing our file.
+    if type(self.store.file)=="string" and type(self.store.data)=="table" then
+        local path=self.store.file..".mangaweb-tmp"
+        local ok,saved=pcall(function()
+            local dump=require("dump")
+            local payload="-- MangaWeb settings\nreturn "..dump(self.store.data,nil,true).."\n"
+            if require("util").writeToFile(payload,path,false,true,false)~=true then return false end
+            local file=io.open(path,"rb")
+            if not file then return false end
+            local written=file:read("*a");file:close()
+            if written~=payload then return false end
+            return os.rename(path,self.store.file)~=nil
+        end)
+        if not ok or not saved then pcall(os.remove,path);return false end
+        local loaded,ffiutil=pcall(require,"ffi/util")
+        if loaded and ffiutil.fsyncDirectory then pcall(ffiutil.fsyncDirectory,self.store.file) end
+        return true
+    end
     if self.store.flush then return self.store:flush() end
     return true
 end
 
 function Settings:reader_settings()
     return assert(normalize_reader(self:read("reader", READER_DEFAULTS), false))
+end
+
+function Settings:cache_policy()
+    local reader=self:reader_settings()
+    return {upper_mb=reader.cache_upper_mb,lower_mb=reader.cache_lower_mb,
+        interval_minutes=reader.cache_check_minutes}
+end
+
+function Settings:save_cache_policy(policy)
+    if type(policy)~='table' then return false,'invalid_cache_policy' end
+    local values=self:reader_settings()
+    values.cache_upper_mb=tonumber(policy.upper_mb)
+    values.cache_lower_mb=tonumber(policy.lower_mb)
+    values.cache_check_minutes=tonumber(policy.interval_minutes)
+    return self:save_reader_settings(values)
 end
 
 function Settings:save_reader_settings(values)

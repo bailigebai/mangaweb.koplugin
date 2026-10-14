@@ -62,6 +62,9 @@ function SiteCenter:show()
         end
     end
     local actions = {}
+    if self.shell.cache_manager then
+        actions.manage_cache=function()return self.shell:show("global_cache")end
+    end
     if self.site_manager then
         actions.add_site = function(definition)
             local created, reason = self.site_manager:add(definition)

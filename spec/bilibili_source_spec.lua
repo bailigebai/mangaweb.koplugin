@@ -14,7 +14,13 @@ local response={data={latestWorks={list={
         vertical_cover="https://i1.hdslb.com/bfs/manga-static/example.jpg",comic_introduction="简介"},
 }}}}
 local html='<html><script type="application/json" id="vike_pageContext">fixture-public-context</script></html>'
+local detail_html='<script type="application/json" id="vike_pageContext">detail-context</script>'
+local detail_response={data={detailCode=0,mangaError=0,seasonData={id=39919,title='请允许我自豪',
+    author_name={'hands2','电驴'},vertical_cover=response.data.latestWorks.list[1].vertical_cover,
+    evaluate='嘉豪与子涵？？？？\n第二段简介',ep_list={{id=2000000,ord=1,
+        short_title='01',title='第一话',image_count=12,is_locked=false}}}}}
 local api=Api:new{http=http,json={decode=function(text)
+    if text=='detail-context' then return detail_response end
     assert(text=="fixture-public-context", "extract the JSON script, not the full HTML")
     return response
 end}}
@@ -34,15 +40,17 @@ assert(#requests==1 and listing.cards[1].comic_id=="39869",
     "local paging must not redownload the same homepage")
 local detail
 source:detail("39919",{on_success=function(value)detail=value end})
+requests[#requests].callbacks.on_success(detail_html,{status=200,headers={}})
 assert(detail.card.comic_id=="39919" and detail.description:find("嘉豪",1,true)
     and detail.description:find("\n第二段简介",1,true))
-assert(#detail.chapters==0 and source:capabilities().pages==false and source.pages==nil,
-    "public metadata must not invent readable chapters")
+assert(#detail.chapters==1 and source:capabilities().pages==false and source.pages==nil,
+    "observed chapters must not claim unverified body image support")
 local model
 local shell={set_model=function(_,value)model=value;return true end,model=function()return model end}
 require("mangaweb.ui.detail"):new{source=source,shell=shell}:show(card)
-assert(model.can_read==false and model.preview_state=="empty" and #requests==1,
-    "opening metadata must not start unverified chapter requests")
+requests[#requests].callbacks.on_success(detail_html,{status=200,headers={}})
+assert(model.can_read==false and model.preview_state=="empty" and #requests==3,
+    "opening a directory must not start unverified body image requests")
 source:list({page=1,refresh=true},callbacks)
 response.data.latestWorks.list.unexpected="not an array"
 requests[#requests].callbacks.on_success(html,{status=200,headers={}})
@@ -73,4 +81,4 @@ assert(#requests==count and browse_model.page_number==2, "ordinary paging must r
 browse_model.actions.refresh()
 assert(#requests==count+1 and state.page==2,
     "the actual refresh action must fetch the homepage even on a cached later page")
-print("bilibili_source_spec: public catalogue, local pagination, metadata-only reading boundary and cancellation passed")
+print("bilibili_source_spec: public catalogue, local pagination, chapter detail and explicit body reading boundary passed")

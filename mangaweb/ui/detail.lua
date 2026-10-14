@@ -291,7 +291,19 @@ function Detail:show(card, options)
             and self.store:get_history(detail.card.site_id, detail.card.comic_id) or nil
         self.default_chapter_id = first_chapter and first_chapter.id or nil
         self.selected_chapter_id = self.default_chapter_id
-        self.resume_page = history and history.page_index or nil
+        self.history_chapter_id = history and history.chapter_id
+        if self.history_chapter_id == nil or self.history_chapter_id == "" then
+            self.history_chapter_id = self.default_chapter_id
+        end
+        for _, chapter in ipairs(detail.chapters) do
+            if tostring(chapter.id) == tostring(self.history_chapter_id) then
+                self.selected_chapter_id = chapter.id
+                break
+            end
+        end
+        self.history_page = history and history.page_index or nil
+        self.resume_page = tostring(self.selected_chapter_id) == tostring(self.history_chapter_id)
+            and self.history_page or nil
         local can_read = self.source ~= nil and type(self.source.pages) == "function"
             or type(detail.card.pages) == "table" and #detail.card.pages > 0
         local model = { page = "detail", detail = detail,
@@ -397,8 +409,8 @@ function Detail:select_chapter(chapter)
     self.selected_chapter_id = chapter.id
     local model = self.shell:model()
     model.selected_chapter_id = chapter.id
-    model.resume_page = tostring(chapter.id) == tostring(self.default_chapter_id)
-        and self.resume_page or nil
+    model.resume_page = tostring(chapter.id) == tostring(self.history_chapter_id)
+        and self.history_page or nil
     model.state = "ready"
     model.detail.card.pages, model.detail.card.chapter_id = nil, nil
     local has_pages_source = self.source and type(self.source.pages) == "function"
@@ -515,8 +527,23 @@ function Detail:start_reading()
         })
     end
     self:_log("Detail:reader_open.start", chapter_id)
+    local chapter_title
+    for _, chapter in ipairs(detail.chapters or {}) do
+        if tostring(chapter.id) == tostring(chapter_id) then
+            chapter_title = chapter.title or chapter.name or tostring(chapter.id)
+            break
+        end
+    end
+    -- The reader owns this request; it must not depend on the detail view's lifetime.
+    local source, comic_id = self.source, card.comic_id
+    local load_chapter = source and type(source.pages) == "function" and function(id, callbacks)
+        return source:pages(comic_id, id, callbacks)
+    end or nil
     local ok, opened, reason = pcall(self.shell.start_reading, self.shell, card, {
         chapter_id = chapter_id,
+        chapter_title = chapter_title,
+        chapters = detail.chapters,
+        load_chapter = load_chapter,
         default_chapter_id = default_chapter_id,
         page_index = model.resume_page,
         pages = cached_pages,

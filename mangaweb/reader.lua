@@ -21,6 +21,9 @@ local function clamp(value, minimum, maximum)
 end
 
 local function copy(value) return Presets.copy(value or {}) end
+local function cancel(handle)
+    if type(handle)=="table" and type(handle.cancel)=="function" then pcall(handle.cancel,handle) end
+end
 
 local function readable_pages(values)
     local pages = {}
@@ -78,6 +81,15 @@ function Reader:_configure_cache()
     end
 end
 
+function Reader:reload_cache_policy()
+    if not self.settings or not self.settings.cache_policy then return end
+    local policy=self.settings:cache_policy()
+    self.reader_settings.cache_upper_mb=policy.upper_mb
+    self.reader_settings.cache_lower_mb=policy.lower_mb
+    self.reader_settings.cache_check_minutes=policy.interval_minutes
+    self:_configure_cache()
+end
+
 function Reader:_cancel_watchdog(stage)
     if stage then
         local watchdog = self.watchdogs[stage]
@@ -111,19 +123,26 @@ function Reader:_arm_watchdog(stage, generation, callback)
     return watchdog
 end
 
-function Reader:_uses_history(context)
-    context = context or self.context or {}
-    return not context.default_chapter_id or not context.chapter_id
-        or tostring(context.chapter_id) == tostring(context.default_chapter_id)
+function Reader:_history_for(context)
+    if context.resume == false or not self.store.get_history then return nil end
+    local history = self.store:get_history(context.site_id, context.comic_id)
+    if not history then return nil end
+    local saved = tostring(history.chapter_id or "")
+    local current = tostring(context.chapter_id or context.default_chapter_id or "")
+    if saved == current or (saved == "" and current == tostring(context.default_chapter_id or "")) then
+        return history
+    end
 end
 
 function Reader:_save_history()
-    if not self:_uses_history() then return true end
     local context = self.context
+    if not self.store.save_history then return true end
     return self.store:save_history{
         site_id = context.site_id, comic_id = context.comic_id, title = context.title,
         author = context.author, cover_url = context.cover_url, detail_url = context.detail_url,
         page_index = self.position, total_pages = #context.pages,
+        chapter_id = context.chapter_id or context.default_chapter_id,
+        chapter_title = context.chapter_title,
     }
 end
 
@@ -171,7 +190,7 @@ function Reader:_display(entry, wanted_segment)
     self.position = entry.index
     self.position_detail = { index = entry.index, segment = segment, pan_y = 0 }
     self.current_path = entry.path
-    if self:_uses_history() then self.context.page_index = entry.index end
+    self.context.page_index = entry.index
     self:_save_history()
     self.target = entry.index
     if self.page_cache and type(self.page_cache.set_position) == "function" then
@@ -357,7 +376,7 @@ end
 
 function Reader:open(context)
     assert(context and context.site_id and context.comic_id, "reader context is required")
-    self:close("replace")
+    if self:close("replace") == false then return false, "panel_display_busy" end
     self.generation = self.generation + 1
     context.pages = readable_pages(context.pages)
     self.context, self.closed, self.entries = context, false, {}
@@ -380,9 +399,8 @@ function Reader:open(context)
             self:_show_error({ code = "parse_error" }, "pages")
             return false, "pages_empty"
         end
-        local history = self:_uses_history(context) and self.store.get_history
-            and self.store:get_history(context.site_id, context.comic_id) or nil
-        local wanted = history and history.page_index or (self:_uses_history(context) and context.page_index or 1)
+        local history = self:_history_for(context)
+        local wanted = history and history.page_index or context.page_index or 1
         wanted = clamp(wanted, 1, #context.pages)
         return self:_request(wanted, nil, false, false, true)
     end
@@ -393,20 +411,23 @@ function Reader:open(context)
         local completed = false
         self:_arm_watchdog("pages", request_generation, function()
             completed = true
+            local handle=self.pages_request;self.pages_request=nil;cancel(handle)
             self:_log("pages", "timeout", 0, "request_timeout")
             self:_show_error({ code = "request_timeout" }, "pages")
             return false
         end)
         local ok, result = pcall(context.load_pages, {
             on_success = function(value)
-                if completed then return false end
+                if completed or self.closed or request_generation ~= self.generation then return false end
                 completed = true
+                self.pages_request=nil
                 self:_cancel_watchdog("pages")
                 return start_pages(type(value) == "table" and value.pages or value)
             end,
             on_error = function(error_value)
                 if completed or self.closed or request_generation ~= self.generation then return false end
                 completed = true
+                self.pages_request=nil
                 self:_cancel_watchdog("pages")
                 self:_log("pages", "error", 0,
                     type(error_value) == "table" and error_value.code or "parse_error")
@@ -426,6 +447,7 @@ function Reader:open(context)
             self:_show_error({ code = "transport_error" }, "pages")
             return false, "pages_error"
         end
+        if not completed and not self.closed and request_generation==self.generation then self.pages_request=result end
         return result ~= false
     end
     self.resolve_pages = request_first_page
@@ -474,6 +496,126 @@ end
 
 function Reader:next() return self:_move(1) end
 function Reader:previous() return self:_move(-1) end
+
+function Reader:chapter_state()
+    local context, index = self.context or {}, nil
+    for i, chapter in ipairs(context.chapters or {}) do
+        if tostring(chapter.id) == tostring(context.chapter_id) then index = i; break end
+    end
+    local available = not self.closed and type(context.load_chapter) == "function" and index ~= nil
+    return { previous = available and index > 1 or false,
+        next = available and index < #(context.chapters or {}) or false,
+        busy = self.chapter_request ~= nil, title = context.chapter_title,
+        index = index, count = #(context.chapters or {}) }
+end
+
+function Reader:_cancel_chapter()
+    local request = self.chapter_request
+    self.chapter_request = nil
+    self:_cancel_watchdog("chapter")
+    if request then
+        cancel(request.handle)
+        if request.loader_generation and self.loader and self.loader.cancel_generation then
+            self.loader:cancel_generation(request.loader_generation)
+        end
+    end
+end
+
+-- Keep the visible page and its loader session until the candidate is displayed.
+function Reader:_commit_chapter(context, request, result)
+    local fields={"context","generation","loader_generation","entries","page_metadata",
+        "reprocessing_sources","position","position_detail","current_path","target","target_segment","resolve_pages"}
+    local previous={}
+    for _,field in ipairs(fields)do previous[field]=self[field] end
+    self.context,self.generation,self.loader_generation=context,self.generation+1,request.loader_generation
+    self.page_metadata,self.reprocessing_sources={},{}
+    self.position,self.position_detail,self.current_path=nil,nil,nil
+    self.target,self.target_segment,self.resolve_pages=1,nil,nil
+    local entry={index=1,key="1:"..tostring(self.processing_epoch),ready=true,
+        path=result.path,raw_path=result.cached_raw or result.path,metadata=result.metadata or {}}
+    self.entries={[1]=entry}
+    self.page_metadata[1]=entry.metadata
+    local ok,shown=pcall(self._display,self,entry)
+    if not ok or shown==false then
+        for _,field in ipairs(fields)do self[field]=previous[field] end
+        return false
+    end
+    request.loader_generation=nil -- ownership transferred to the reader
+    self.chapter_request=nil
+    self:_cancel_watchdog("chapter")
+    self:_cancel_watchdog("image")
+    if self.loader.cancel_generation and previous.loader_generation then
+        self.loader:cancel_generation(previous.loader_generation)
+    end
+    return true
+end
+
+function Reader:switch_chapter(offset)
+    local state = self:chapter_state()
+    if state.busy then return false, "chapter_busy" end
+    if offset ~= 1 and offset ~= -1 then return false, "chapter_out_of_range" end
+    if not (offset == 1 and state.next or offset == -1 and state.previous) then
+        return false, "chapter_out_of_range"
+    end
+    local context, generation = self.context, self.generation
+    local chapter = context.chapters[state.index + offset]
+    local request = {}
+    self.chapter_request = request
+    local function valid()
+        return not self.closed and self.generation == generation and self.chapter_request == request
+    end
+    local function status(value, error)
+        if self.ui.show_chapter_status then self.ui:show_chapter_status(value, error) end
+    end
+    local function failed(error)
+        if not valid() then return false end
+        self:_cancel_chapter()
+        status("error", Models.error(error or {code="parse_error"}, context.site_id, "chapter"))
+        return false
+    end
+    status("loading")
+    self:_arm_watchdog("chapter", generation, function()return failed{code="request_timeout"}end)
+    local ok, handle = pcall(context.load_chapter, chapter.id, {
+        on_success = function(result)
+            if not valid() or request.enumerated then return false end
+            request.enumerated=true
+            local pages = readable_pages(type(result)=="table" and result.pages or nil)
+            if #pages == 0 then return failed{code="parse_error"} end
+            local next_context = {}
+            for key, value in pairs(context) do next_context[key] = value end
+            next_context.chapter_id, next_context.chapter_title = chapter.id, chapter.title or chapter.name or tostring(chapter.id)
+            next_context.pages, next_context.page_index, next_context.resume = pages, 1, false
+            -- Never retain a first-chapter loader when switching chapters.
+            next_context.load_pages = function(callbacks)return context.load_chapter(chapter.id, callbacks)end
+            if not self.loader then return failed{code="http_unavailable"} end
+            request.loader_generation=self.loader:begin_session("chapter")
+            local page=pages[1]
+            local identity=ImageIdentity.page({site_id=context.site_id,comic_id=context.comic_id,
+                chapter_id=chapter.id,index=1,url=page.url},page.headers,self.page_cache and self.page_cache.sha256)
+            local started, image_handle=pcall(self.loader.request,self.loader,request.loader_generation,{
+                key="1:"..tostring(self.processing_epoch),index=1,url=page.url,headers=page.headers,
+                site_id=context.site_id,stage="image",priority=1,cache_identity=identity,
+                profile=self:_profile(page,page.metadata or {}),
+            },{on_ready=function(image)
+                if not valid() then return false end
+                if not self:_commit_chapter(next_context,request,image) then return failed{code="image_error"} end
+                status("ready");return true
+            end,on_error=failed,on_progress=function(bytes)
+                if valid() and tonumber(bytes) and bytes>(request.bytes or 0) then
+                    request.bytes=bytes
+                    self:_arm_watchdog("chapter",generation,function()return failed{code="request_timeout"}end)
+                end
+            end})
+            if not started or image_handle==false then return failed{code="image_error"} end
+            if valid() then request.handle=image_handle end
+            return true
+        end,
+        on_error = function(error)if not request.enumerated then return failed(error)end;return false end,
+    })
+    if not ok or handle == false then return failed{code="transport_error"} end
+    if valid() and not request.enumerated then request.handle = handle end
+    return true
+end
 
 function Reader:go_to(index)
     if self.closed then return false, "reader_closed" end
@@ -678,11 +820,14 @@ function Reader:close(reason)
     if self.closed then return true end
     if self.panels and not self.panels:close() then return false,'panel_display_busy' end
     self.closed = true
+    self:_cancel_chapter()
+    local pages_request=self.pages_request;self.pages_request=nil;cancel(pages_request)
     self.generation = self.generation + 1
     self:_cancel_watchdog()
     if self.loader and self.loader.cancel_generation and self.loader_generation then
         self.loader:cancel_generation(self.loader_generation)
     end
+    if self.page_cache and self.page_cache.clear_position then self.page_cache:clear_position() end
     self.entries, self.context, self.current_path, self.position = {}, nil, nil, nil
     self.resolve_pages = nil
     self.position_detail, self.target = nil, nil
