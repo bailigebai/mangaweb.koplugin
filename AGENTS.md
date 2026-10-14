@@ -3,7 +3,7 @@
 ## 接手先读
 
 1. `../START-HERE.md` 和 `../DEVELOPMENT-HANDOFF.md`：完整本地交接与当前事实。
-2. `docs/delivery-0.8.92.md`、`docs/release-notes-0.8.92.md`、`docs/superpowers/plans/2026-10-13-reader-speed.md`：最新翻页优化、安装和验收边界；历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
+2. `docs/delivery-0.8.93.md`、`docs/release-notes-0.8.93.md`、`docs/delivery-0.8.92.md`、`docs/release-notes-0.8.92.md`、`docs/superpowers/plans/2026-10-13-reader-speed.md`：最新翻页优化、安装和验收边界；历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
 3. 处理Bilibili时读 `docs/superpowers/plans/2026-10-10-bilibili-account-source.md`；处理分格时读 `docs/temporary-panel-tuning-plan-2026-10-10.md`。
 
 ## 用户工作原则
@@ -16,6 +16,9 @@
 
 ## 当前不可遗漏的事实
 
+- v0.8.93已安装并发布测试版：阅读内切章、任意章节续读、全局缓存管理、Zero会话保护与联网就绪门控。92程序文件回读一致，设置/数据库哈希不变，603非程序文件路径/大小不变。74规格/88语法/9 Python检查通过；真实设备数据库副本迁移保留10条历史。新增功能和本次Zero登录仍待用户断USB验收。见最新交付记录；不要把安装通过当作实机功能通过。
+- 设置适配器在同目录临时写入、核对内容后原子替换；KOReader LuaSettings.flush本身忽略写入失败，不能直接依据它的self返回值认定保存成功。切章首图显示成功后才提交，失败保留原页。
+
 - v0.8.92：50元提示保留。10月13日用户确认Zero已恢复阅读，新日志有204页和202页章节首图及后续页显示；不能据此认定新增诊断记录就是网络恢复原因，也不能声称所有网络故障已根治。
 - 本版目标页提升为前台优先，复用活动下载；原生窗口空闲时最多提前解码后两页。设备89个程序文件回读一致，设置哈希不变；实际翻页耗时仍待用户验收。响应阶段、字节数和协议诊断继续保留，见 `docs/superpowers/plans/2026-10-13-zero-partial-reading.md`。
 - Bilibili扫码成功。v0.8.92已接入官网移动详情SSR与账号会话，真实产品实测68章；插件直接正文请求仍HTTP200/code99，`pages=false`，预览、阅读及章节阅读切换仍未完成。10月13日在用户打开的官网《鬼灭之刃》中实际抓到GetImageIndex/ImageToken code0及正文图片；接口携带m2/m1，响应使用bytesData，协议移植尚未完成。见 `docs/bilibili-reading-protocol-2026-10-13.md`。不要仅放开按钮，不增加设备运行时或中间服务。
@@ -26,6 +29,6 @@
 
 ## 基础检查
 
-在交接文件夹运行 `START-HERE.md` 的命令：66组Lua规格、85语法、8项Python检查；完整契约依赖 `../test-support/graydither`。`scripts/build_package.py`仅收录89个公开运行文件，不要递归打包全部项目目录。
+在交接文件夹运行 `START-HERE.md` 的命令：74组Lua规格、88语法、9项Python检查；完整契约依赖 `../test-support/graydither`。`scripts/build_package.py`仅收录92个公开运行文件，不要递归打包全部项目目录。
 
 继续开发的工作区是本目录；原电脑 `E:\mangaweb.koplugin` 是旧0.8.89源码，不能误用。发布前重新核对Git远端、标签和用户授权，本分支暂未设置推送上游。
