@@ -202,6 +202,13 @@ function Reader:_display(entry, wanted_segment)
     return true
 end
 
+function Reader:_viewport_changed(entry)
+    if not entry.viewport_width or type(self.ui.reader_viewport)~="function" then return false end
+    local width,height=self.ui:reader_viewport()
+    return (width~=entry.viewport_width or height~=entry.viewport_height)
+        and self:_profile(self.context.pages[entry.index],self.page_metadata[entry.index] or {})~=nil
+end
+
 function Reader:_cache_identity(index)
     local page = self.context.pages[index] or {}
     return ImageIdentity.page({ site_id = self.context.site_id, comic_id = self.context.comic_id,
@@ -218,6 +225,12 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
         self:_cancel_watchdog("image")
     end
     local entry = self.entries[index]
+    if entry and entry.ready and not force and self:_viewport_changed(entry) then
+        self.reprocessing_sources=self.reprocessing_sources or {}
+        self.reprocessing_sources[index]=entry.raw_path
+        self:_cancel_entry(entry,true)
+        force=true
+    end
     if entry and entry.ready and not force then
         if is_prefetch then return true end
         local shown, reason = self:_display(entry, wanted_segment or entry.segment)
@@ -253,6 +266,9 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
     local metadata = self.page_metadata[index] or page.metadata or {}
     entry = { index = index, key = key, segment = wanted_segment,
         source_metadata = { width = tonumber(metadata.width), height = tonumber(metadata.height) } }
+    if type(self.ui.reader_viewport)=="function" then
+        entry.viewport_width,entry.viewport_height=self.ui:reader_viewport()
+    end
     self.entries[index] = entry
     local function ready(result)
         if self.closed or request_generation ~= self.generation
@@ -270,6 +286,7 @@ function Reader:_request(index, wanted_segment, is_prefetch, force, loading_show
             self.page_metadata[index] = entry.metadata
         end
         if self.target == index then
+            if self:_viewport_changed(entry) then return self:_request(index,entry.segment)end
             local shown = self:_display(entry, entry.segment)
             if shown == false then self:_reject_entry(index, entry) end
         else
@@ -734,6 +751,64 @@ function Reader:update_settings(changes)
 end
 
 function Reader:settings_snapshot() return copy(self.reader_settings) end
+
+-- Prepare from the owned original; keep the current entry until drawing accepts it.
+function Reader:prepare_viewport(width,height,draw,callbacks)
+    callbacks=callbacks or {}
+    local index=self.position
+    local entry=index and self.entries[index]
+    if self.closed or not entry or not entry.ready or self.target~=index or self.chapter_request
+        or not self.loader or type(entry.raw_path)~="string" then return false,"reader_busy" end
+    local generation,loader_generation=self.generation,self.loader_generation
+    local page=self.context.pages[index]
+    local profile=PageProcessor.profile(self.page_metadata[index] or {},self.reader_settings,width,height)
+    self.viewport_serial=(self.viewport_serial or 0)+1
+    local key="viewport:"..self.viewport_serial
+    local finished,handle=false,nil
+    local function valid()
+        return not finished and not self.closed and self.generation==generation
+            and self.position==index and self.target==index and self.entries[index]==entry
+    end
+    local function release()
+        cancel(handle)
+        if self.loader.release then self.loader:release(loader_generation,key)end
+    end
+    local result_handle={cancel=function()
+        if finished then return true end
+        finished=true;release();return true
+    end}
+    local function failed(error)
+        if not valid()then return false end
+        finished=true;release()
+        if callbacks.on_error then callbacks.on_error(error)end
+        return false
+    end
+    local ok,result=pcall(self.loader.request,self.loader,loader_generation,{
+        key=key,index=index,url=page.url,headers=page.headers,source_path=entry.raw_path,
+        profile=profile,priority=1,site_id=self.context.site_id,stage="image",cache_identity=self:_cache_identity(index),
+    },{on_ready=function(value)
+        if not valid()then return false end
+        if (value.metadata or {}).processing_error then return failed{code="image_processing_failed"}end
+        local options={segment=(self.position_detail or {}).segment or "whole",
+            pan_y=(self.position_detail or {}).pan_y or 0,fit_mode=self.reader_settings.fit_mode,
+            direction=self.reader_settings.direction,split_cut_percent=self.reader_settings.split_cut_percent}
+        local called,accepted=pcall(draw,value.path,index,#self.context.pages,options)
+        if not called or accepted==false then return failed{code="image_error"}end
+        finished=true
+        local old_key=entry.key
+        entry.key,entry.path,entry.raw_path=key,value.path,value.cached_raw or entry.raw_path
+        entry.handle=handle
+        entry.metadata=value.metadata or {};entry.viewport_width,entry.viewport_height=width,height
+        self.current_path=value.path
+        if self.loader.release then self.loader:release(loader_generation,old_key)end
+        if callbacks.on_success then callbacks.on_success()end
+        return true
+    end,on_error=failed})
+    handle=ok and result or nil
+    if ok and finished and entry.key==key then entry.handle=handle end
+    if not ok or result==false then failed{code="image_error"};return false,"image_error" end
+    return result_handle
+end
 
 function Reader:panel_settings_snapshot()
     if self.panel_preferences and self.context then

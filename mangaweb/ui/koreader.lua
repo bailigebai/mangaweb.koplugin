@@ -1836,10 +1836,11 @@ function Adapter:_render(model, force_menu)
     local manager, Menu = self.ui_manager, self.menu
     if not manager or not Menu then return false end
     local previous = self.widget
-    local keep_detail_images = not force_menu and previous and model
+    local size_changed=self.root_size_dirty
+    local keep_detail_images = not size_changed and not force_menu and previous and model
         and previous.page_id == "detail" and model.page == "detail"
         and self.detail_image_identity == detail_image_identity(model)
-    local keep_grid_images = not force_menu and previous and model
+    local keep_grid_images = not size_changed and not force_menu and previous and model
         and (model.page == "browse" or model.page == "library"
             or model.page == "history" or model.page == "category_items")
         and previous.page_id == model.page and previous == self.cover_grid
@@ -1848,7 +1849,7 @@ function Adapter:_render(model, force_menu)
     if self.error_widget and manager.close then manager:close(self.error_widget) end
     self.error_widget = nil
     local widget, after_show
-    local reusable = not force_menu and previous and model
+    local reusable = not size_changed and not force_menu and previous and model
         and previous.page_id == model.page and type(previous.update_model) == "function"
         and previous or nil
     local built, build_error = pcall(function()
@@ -1931,6 +1932,7 @@ function Adapter:_render(model, force_menu)
     end)
     if not shown or show_error == false then return false end
     self.root_widget = self.root_renderer.root_widget
+    self.root_size_dirty=nil
     if after_show then pcall(after_show) end
     return true
 end
@@ -2129,6 +2131,12 @@ function Adapter:_show_reader_controls(section)
     local manager, reader = self.ui_manager, self.reader
     if not manager or not reader then return false end
     section = section or "root"
+    if section=="device_rotation" then
+        if not self.reader_rotation or self.reader_rotation.reader~=reader then
+            self.reader_rotation=require("mangaweb.ui.reader_rotation"):new{adapter=self,reader=reader}
+        end
+        return self.reader_rotation:show()
+    end
     if section=="cache" and self.shell and self.shell.cache_manager then
         return require("mangaweb.ui.cache_manager").reader(self,reader,self.shell.cache_manager)
     end
@@ -2285,6 +2293,7 @@ function Adapter:_show_reader_controls(section)
         section, title = "root", "阅读设置"
         items = {
             item("阅读翻页", function() return show_section("reading") end),
+            item("设备旋转", function() return show_section("device_rotation") end),
             item("阅读预加载", function() return show_section("preload") end),
             item("图片显示", function() return show_section("display") end),
             item("宽图拆分", function() return show_section("split") end),
@@ -2570,6 +2579,23 @@ function Adapter:show_page(path, index, total, options)
     return true
 end
 
+function Adapter:_replace_reader_viewport(path,index,total,options)
+    local manager=self.ui_manager
+    local renderer=self:_new_reader_renderer()
+    local model={path=path,index=index,total=total,actions=self:_reader_actions(),controls_visible=false}
+    for key,value in pairs(options or {})do model[key]=value end
+    local built,page=pcall(renderer.show,renderer,model)
+    if not built or not page then renderer:close();return false end
+    local shown,result=pcall(manager.show,manager,page)
+    if not shown or result==false then renderer:close();return false end
+    self:_close_reader_controls()
+    local previous=self.reader_renderer
+    self.reader_renderer,self.reader_widget=renderer,page
+    self.reader_loading,self.last_progress_paint=nil,nil
+    if previous then previous:close()end
+    return true
+end
+
 function Adapter:panel_snapshot()
     return self.reader_widget and self.reader_widget:panel_snapshot()
 end
@@ -2582,6 +2608,7 @@ end
 function Adapter:restore_panel_page() return self:detach_panel() end
 
 function Adapter:close_reader(reason)
+    if self.reader_rotation then self.reader_rotation:close();self.reader_rotation=nil end
     self.reader_panels=nil
     self.reader_refresh = nil
     if self.reader_filters then self.reader_filters:close(); self.reader_filters=nil end
@@ -2602,6 +2629,7 @@ function Adapter:close_reader(reason)
     end
     self.error_widget, self.reader_controls, self.reader_widget, self.reader_renderer = nil, nil, nil, nil
     self.reader_loading, self.last_progress_paint = nil, nil
+    if self.root_size_dirty and self.shell and not self.shell.closed then self:_render(self.shell:model())end
     return true
 end
 

@@ -26,6 +26,15 @@ function NativeRoot:new(deps)
     local screen = deps.screen
     local screen_w = screen and type(screen.getWidth) == "function" and screen:getWidth() or nil
     local screen_h = screen and type(screen.getHeight) == "function" and screen:getHeight() or nil
+    local function dimensions(root)
+        root.width=screen and screen.getWidth and screen:getWidth() or screen_w
+        root.height=screen and screen.getHeight and screen:getHeight() or screen_h
+        if screen and screen.getSize then root.dimen=screen:getSize()end
+        if deps.gesture_range and screen and screen.getSize then
+            root.ges_events=root.ges_events or {}
+            root.ges_events.RootTap={deps.gesture_range:new{ges="tap",range=screen:getSize()}}
+        end
+    end
     local function bind_content(root, content)
         root.cropping_widget = content and content.cropping_widget or nil
         cascade_show_parent(content, root)
@@ -45,6 +54,7 @@ function NativeRoot:new(deps)
     if Input and Input.extend then
         local RootWidget = Input:extend{ modal = true, fullscreen = true, covers_fullscreen = true }
         function RootWidget:set_content(content, on_back)
+            dimensions(self)
             local previous = self.content
             self.content, self.on_back = content, on_back
             -- Every child that asks KOReader to repaint must point at the
@@ -54,7 +64,7 @@ function NativeRoot:new(deps)
             -- first (now stale) cropping widget.
             bind_content(self, content)
             self[1] = deps.frame_container and deps.frame_container:new{
-                width = screen_w or self.width, height = screen_h or self.height, margin = 0, padding = 0,
+                width = self.width, height = self.height, margin = 0, padding = 0,
                 bordersize = 0, background = deps.blitbuffer and deps.blitbuffer.COLOR_WHITE,
                 content,
             } or content
@@ -73,6 +83,7 @@ function NativeRoot:new(deps)
             background = deps.blitbuffer and deps.blitbuffer.COLOR_WHITE,
             width = screen_w, height = screen_h }
     function self.root_widget:set_content(content, on_back)
+            dimensions(self)
             local previous = self.content
             self.content, self.on_back = content, on_back
             bind_content(self, content)

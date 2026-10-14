@@ -99,6 +99,7 @@ RUNTIME_FILES = (
     "mangaweb/ui/reader_filters.lua",
     "mangaweb/ui/reader_panels.lua",
     "mangaweb/ui/reader_refresh.lua",
+    "mangaweb/ui/reader_rotation.lua",
     "mangaweb/ui/settings.lua",
     "mangaweb/ui/shell.lua",
     "mangaweb/ui/site_center.lua",

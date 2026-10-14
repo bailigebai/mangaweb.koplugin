@@ -3,7 +3,7 @@
 ## 接手先读
 
 1. `../START-HERE.md` 和 `../DEVELOPMENT-HANDOFF.md`：完整本地交接与当前事实。
-2. `docs/delivery-0.8.93.md`、`docs/release-notes-0.8.93.md`、`docs/delivery-0.8.92.md`、`docs/release-notes-0.8.92.md`、`docs/superpowers/plans/2026-10-13-reader-speed.md`：最新翻页优化、安装和验收边界；历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
+2. `docs/delivery-0.8.94.md`、`docs/release-notes-0.8.94.md`、`docs/delivery-0.8.93.md`、`docs/release-notes-0.8.93.md`、`docs/delivery-0.8.92.md`、`docs/release-notes-0.8.92.md`、`docs/superpowers/plans/2026-10-13-reader-speed.md`：最新翻页优化、安装和验收边界；历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
 3. 处理Bilibili时读 `docs/superpowers/plans/2026-10-10-bilibili-account-source.md`；处理分格时读 `docs/temporary-panel-tuning-plan-2026-10-10.md`。
 
 ## 用户工作原则
@@ -15,6 +15,8 @@
 实现和审计分开，代码后检查根因、边界、错误处理与覆盖，运行相关检查。区分事实、推断和未验证假设；桌面测试、安装回读、真实阅读是不同证据。发布、外部通信、敏感数据或删除需确认已有用户授权，不能自行扩大操作范围。用白话解释；完成汇报包含结果、改动、验证、验收方式与未解决项。
 
 ## 当前不可遗漏的事实
+
+- v0.8.94新增手动设备旋转，0/90/180/270度，退出阅读保留设备方向，原WebDAVManga不改。当前页从本地原图准备，成功再换窗口，失败回滚；迟到的旧视口增强预加载图必须重新处理后显示。源码/解包76规格、89语法、9 Python检查通过，93运行文件；设备安装和GitHub状态以delivery-0.8.94.md为准。
 
 - v0.8.93已安装并发布测试版：阅读内切章、任意章节续读、全局缓存管理、Zero会话保护与联网就绪门控。92程序文件回读一致，设置/数据库哈希不变，603非程序文件路径/大小不变。74规格/88语法/9 Python检查通过；真实设备数据库副本迁移保留10条历史。新增功能和本次Zero登录仍待用户断USB验收。见最新交付记录；不要把安装通过当作实机功能通过。
 - 设置适配器在同目录临时写入、核对内容后原子替换；KOReader LuaSettings.flush本身忽略写入失败，不能直接依据它的self返回值认定保存成功。切章首图显示成功后才提交，失败保留原页。
@@ -29,6 +31,6 @@
 
 ## 基础检查
 
-在交接文件夹运行 `START-HERE.md` 的命令：74组Lua规格、88语法、9项Python检查；完整契约依赖 `../test-support/graydither`。`scripts/build_package.py`仅收录92个公开运行文件，不要递归打包全部项目目录。
+在交接文件夹运行 `START-HERE.md` 的命令：76组Lua规格、89语法、9项Python检查；完整契约依赖 `../test-support/graydither`。`scripts/build_package.py`仅收录93个公开运行文件，不要递归打包全部项目目录。
 
 继续开发的工作区是本目录；原电脑 `E:\mangaweb.koplugin` 是旧0.8.89源码，不能误用。发布前重新核对Git远端、标签和用户授权，本分支暂未设置推送上游。
