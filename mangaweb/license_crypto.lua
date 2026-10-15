@@ -66,6 +66,17 @@ local function load_backend()
             int EVP_DecodeBlock(unsigned char *, const unsigned char *, int);
         ]]
         libcrypto = ffi.loadlib("crypto", "57")
+        -- Android monolibtic can load while keeping the RSA entry points
+        -- private. Check the complete API before allocating native objects.
+        for _, name in ipairs({
+            "BIO_new_mem_buf", "BIO_free", "PEM_read_bio_PUBKEY", "EVP_PKEY_free",
+            "EVP_PKEY_get1_RSA", "RSA_size", "RSA_free", "EVP_MD_CTX_new",
+            "EVP_MD_CTX_free", "EVP_sha256", "EVP_DigestVerifyInit",
+            "EVP_PKEY_CTX_ctrl_str", "EVP_DigestUpdate", "EVP_DigestVerifyFinal",
+            "EVP_DecodeBlock",
+        }) do
+            assert(libcrypto[name] ~= nil)
+        end
     end)
     if not success then
         ffi, libcrypto = nil, nil
@@ -80,7 +91,11 @@ function Crypto.verify(message, signature, public_pem)
         or type(public_pem) ~= "string" or #public_pem == 0 or #public_pem > 8192 then
         return false
     end
-    if not load_backend() then return false end
+    if not load_backend() then
+        return require("mangaweb.license_rsa_portable").verify(
+            message, signature, public_pem, Crypto.sha256
+        )
+    end
 
     local bio, public_key, rsa, context
     local success, verified = pcall(function()

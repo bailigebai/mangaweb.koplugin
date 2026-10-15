@@ -45,6 +45,7 @@ RUNTIME_FILES = (
     "mangaweb/license_dialog.lua",
     "mangaweb/license_json.lua",
     "mangaweb/license_protocol.lua",
+    "mangaweb/license_rsa_portable.lua",
     "mangaweb/license_store.lua",
     "mangaweb/license_transport.lua",
     "mangaweb/models.lua",
