@@ -160,7 +160,7 @@ function Settings:flush()
         local ok,saved=pcall(function()
             local dump=require("dump")
             local payload="-- MangaWeb settings\nreturn "..dump(self.store.data,nil,true).."\n"
-            if require("util").writeToFile(payload,path,false,true,false)~=true then return false end
+            if require("util").writeToFile(payload,path,false,false,false)~=true then return false end
             local file=io.open(path,"rb")
             if not file then return false end
             local written=file:read("*a");file:close()

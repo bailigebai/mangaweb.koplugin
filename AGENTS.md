@@ -3,7 +3,7 @@
 ## 接手先读
 
 1. `../START-HERE.md` 和 `../DEVELOPMENT-HANDOFF.md`：完整本地交接与当前事实。
-2. `docs/delivery-0.8.94.md`、`docs/release-notes-0.8.94.md`、`docs/delivery-0.8.93.md`、`docs/release-notes-0.8.93.md`、`docs/delivery-0.8.92.md`、`docs/release-notes-0.8.92.md`、`docs/superpowers/plans/2026-10-13-reader-speed.md`：最新翻页优化、安装和验收边界；历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
+2. `docs/delivery-0.8.95.md`、`docs/release-notes-0.8.95.md`、`docs/temporary-android-compatibility-2026-10-15.md`：安卓登录保存修复与设备证据；此前旋转、缓存、翻页交付见 `docs/delivery-0.8.94.md`、`docs/delivery-0.8.93.md`、`docs/delivery-0.8.92.md`。历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
 3. 处理Bilibili时读 `docs/superpowers/plans/2026-10-10-bilibili-account-source.md`；处理分格时读 `docs/temporary-panel-tuning-plan-2026-10-10.md`。
 
 ## 用户工作原则
@@ -16,6 +16,9 @@
 
 ## 当前不可遗漏的事实
 
+- v0.8.95修复Settings:flush传完整Lua内容却再次要求util.writeToFile包装，导致Cookie及其他设置保存失败。安卓现场确认登录/验证成功后cookie_save_failed；真实KOReader helper对照和回归验证修复。已备份安装真我GT5 Pro，93文件完整回读一致，129非程序路径/大小不变，数据库哈希不变；原账号文件不存在，安装未创建或改变，不能称其哈希已核对。临时诊断主程序已移除，76规格/89语法/9 Python通过。安卓实际重登与重启保留待用户验收；GitHub尚未发布v0.8.95。
+- 用户本次明确允许单独修复WebDAVManga安卓兼容点；其v0.4.31默认CA路径改用程序目录，原阅读功能未改。236规格/118语法通过，用户已确认入口恢复。MangaWeb独立副本的约束保持，不能将这次授权扩展成改动原WebDAV其他功能。
+
 - v0.8.94新增手动设备旋转，0/90/180/270度，退出阅读保留设备方向，原WebDAVManga不改。当前页从本地原图准备，成功再换窗口，失败回滚；迟到的旧视口增强预加载图必须重新处理后显示。源码/解包76规格、89语法、9 Python检查通过，93运行文件；GitHub已发布并重新下载校验；已备份安装Kindle，93文件完整回读一致，账号设置与数据库哈希不变，768个非程序文件路径/大小不变，设备回读代码76规格/89语法通过。设备实际旋转与触摸待验收，详见delivery-0.8.94.md。
 
 - v0.8.93已安装并发布测试版：阅读内切章、任意章节续读、全局缓存管理、Zero会话保护与联网就绪门控。92程序文件回读一致，设置/数据库哈希不变，603非程序文件路径/大小不变。74规格/88语法/9 Python检查通过；真实设备数据库副本迁移保留10条历史。新增功能和本次Zero登录仍待用户断USB验收。见最新交付记录；不要把安装通过当作实机功能通过。
@@ -24,7 +27,7 @@
 - v0.8.92：50元提示保留。10月13日用户确认Zero已恢复阅读，新日志有204页和202页章节首图及后续页显示；不能据此认定新增诊断记录就是网络恢复原因，也不能声称所有网络故障已根治。
 - 本版目标页提升为前台优先，复用活动下载；原生窗口空闲时最多提前解码后两页。设备89个程序文件回读一致，设置哈希不变；实际翻页耗时仍待用户验收。响应阶段、字节数和协议诊断继续保留，见 `docs/superpowers/plans/2026-10-13-zero-partial-reading.md`。
 - Bilibili扫码成功。v0.8.92已接入官网移动详情SSR与账号会话，真实产品实测68章；插件直接正文请求仍HTTP200/code99，`pages=false`，预览、阅读及章节阅读切换仍未完成。10月13日在用户打开的官网《鬼灭之刃》中实际抓到GetImageIndex/ImageToken code0及正文图片；接口携带m2/m1，响应使用bytesData，协议移植尚未完成。见 `docs/bilibili-reading-protocol-2026-10-13.md`。不要仅放开按钮，不增加设备运行时或中间服务。
-- 只修改MangaWeb。WebDAVManga原插件不要修改，智能分格是独立副本。
+- 分格和旋转功能在MangaWeb独立维护，不迁移改动原WebDAV功能。2026-10-15用户只额外授权单独修复原WebDAV的安卓CA路径。
 - 本地收藏单分类，“默认”全部收藏，支持批量分类；WNACG不预置。
 - 不上传或打包Cookie、扫码键、用户设置、激活凭证、原始设备日志、私钥。保留公开验签公钥。
 - 原有两份现场文档修改已保留在本次交付历史中；不能随意reset/clean。
