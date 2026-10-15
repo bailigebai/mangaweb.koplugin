@@ -3,7 +3,7 @@
 ## 接手先读
 
 1. `../START-HERE.md` 和 `../DEVELOPMENT-HANDOFF.md`：完整本地交接与当前事实。
-2. `docs/delivery-0.8.97.md`、`docs/temporary-android-activation-signature-2026-10-15.md`：安卓原生验签能力缺失与独立验签修复；`docs/delivery-0.8.96.md`、`docs/delivery-0.8.95.md`：证书路径、登录保存修复与设备证据。此前旋转、缓存、翻页见0.8.94/93/92交付记录，历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
+2. `docs/delivery-0.8.98.md`、`docs/superpowers/plans/2026-10-15-chapter-history-reopen.md`：切章后原详情重开覆盖历史修复；`docs/delivery-0.8.97.md`、`docs/temporary-android-activation-signature-2026-10-15.md`：安卓原生验签能力缺失与独立验签修复；`docs/delivery-0.8.96.md`、`docs/delivery-0.8.95.md`：证书路径、登录保存修复与设备证据。此前旋转、缓存、翻页见0.8.94/93/92交付记录，历史网络证据见 `docs/zero-device-repair-2026-10-12.md`。
 3. 处理Bilibili时读 `docs/superpowers/plans/2026-10-10-bilibili-account-source.md`；处理分格时读 `docs/temporary-panel-tuning-plan-2026-10-10.md`。
 
 ## 用户工作原则
@@ -18,6 +18,7 @@
 
 ## 当前不可遗漏的事实
 
+- v0.8.98修复原详情selected_chapter_id/历史快照过期：Reader切章首图已保存c2，但原详情重开c1会覆盖记录。最终仅增加Reader保存明确成功后可选通知，Detail同步当前章节/历史快照/续读页码；审查发现章节页码往返碰撞后已删除初稿比较方案。手动选章首图失败可重试、过期回调隔离；无新网络请求/数据库结构改动。原版Lua与真实文件SQLite回归均复现覆盖，修复后源码/解包79规格、90语法、11 Python通过；KOReader真实ARM SQLite跨两个进程，未清理Reader/DB直接_exit后续读c2/page2通过。94文件安装包，手机未连接，用户要求先按代码排查，本版未安装/未实机验收。发布和审查状态见交付记录。
 - v0.8.97修复安卓合并库未导出RSA验签函数而误报签名无效。手机合成自检确认库可加载但所有所需入口不可见；增加原生完整能力检查，缺失时使用限定RSA2048/e65537/SPKI/SHA256/PKCS1-v1.5独立验签，保留公钥、协议和设备绑定。源/解包78规格、90语法、10 Python通过，真实ARM40检查、6把独立公钥192检查和独立审查通过。已备份安装手机，94程序完整回读一致，回读78规格/90语法通过，账号/授权/数据库哈希相同，146非程序路径/大小不变，临时自检移除。用户已确认真实激活成功及关闭重开插件授权保留；GitHub测试版已发布，三个附件与94运行文件回下载核对一致，标签c094a6d。随后Zero预览/正文传输失败；临时main诊断安装后用户重启重试并反馈可以进入，但新诊断日志MTP未可见，恢复根因未确定。现已恢复正式main并单文件回读匹配ZIP，恢复后的真实阅读待重启验收。详见docs/zero-android-reading-recovery-2026-10-15.md；不得把诊断安装、授权成功或当次进入扩大为所有阅读已根治。
 - v0.8.96修复授权模块默认CA路径误用安卓外部用户目录，改为KOReader运行目录的data/ca-bundle.crt。新增授权传输回归，原版复现tls_unavailable；保留peer、域名、签名与绑定验证，不清除授权身份。已发布GitHub测试版并回下载核对93文件，标签源码f196b38；77规格/89语法/9 Python通过。首次手机核对中途断开，重连后93程序完整回读一致，回读77规格/89语法通过，授权记录与数据库哈希不变。账号文件两次快照哈希不同，当前快照可解析，本次只读核对未修改或恢复账号文件；不能称其安装前后字节不变。实际激活与授权重开保留仍待验收；不能根据请求测试声称真实密钥已激活。
 - v0.8.95修复Settings:flush传完整Lua内容却再次要求util.writeToFile包装，导致Cookie及其他设置保存失败。安卓现场确认登录/验证成功后cookie_save_failed；真实KOReader helper对照和回归验证修复。已备份安装真我GT5 Pro，93文件完整回读一致，129非程序路径/大小不变，数据库哈希不变；原账号文件不存在，安装未创建或改变，不能称其哈希已核对。临时诊断主程序已移除，76规格/89语法/9 Python通过。用户已确认重新登录与插件重开保留正常；不扩展为整机重启验收。已补发GitHub测试版v0.8.95，标签源码0bf92a8，建议直接使用包含全部修复的v0.8.96。
@@ -38,6 +39,6 @@
 
 ## 基础检查
 
-在交接文件夹运行 `START-HERE.md` 的命令：78组Lua规格、90语法、10项Python检查；完整契约依赖 `../test-support/graydither`。`scripts/build_package.py`仅收录94个公开运行文件，不要递归打包全部项目目录。
+在交接文件夹运行 `START-HERE.md` 的命令：79组Lua规格、90语法、11项Python检查；完整契约依赖 `../test-support/graydither`。`scripts/build_package.py`仅收录94个公开运行文件，不要递归打包全部项目目录。
 
 继续开发的工作区是本目录；原电脑 `E:\mangaweb.koplugin` 是旧0.8.89源码，不能误用。发布前重新核对Git远端、标签和用户授权，本分支暂未设置推送上游。

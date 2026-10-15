@@ -549,6 +549,14 @@ function Detail:start_reading()
         pages = cached_pages,
         load_pages = load_pages,
         on_open_error = report_open_error,
+        -- This detail remains below the reader. Only a successfully saved
+        -- display replaces an explicit chapter choice, including round trips.
+        on_history_saved = function(history)
+            if not self:_is_current() or self.shell:model() ~= model then return end
+            self.history_chapter_id, self.history_page = history.chapter_id, history.page_index
+            self.selected_chapter_id = history.chapter_id
+            model.selected_chapter_id, model.resume_page = history.chapter_id, history.page_index
+        end,
     })
     if not ok then opened, reason = false, "reader_error" end
     self:_log("Detail:reader_open.result", chapter_id,

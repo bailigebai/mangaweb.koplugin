@@ -137,13 +137,18 @@ end
 function Reader:_save_history()
     local context = self.context
     if not self.store.save_history then return true end
-    return self.store:save_history{
+    local record = {
         site_id = context.site_id, comic_id = context.comic_id, title = context.title,
         author = context.author, cover_url = context.cover_url, detail_url = context.detail_url,
         page_index = self.position, total_pages = #context.pages,
         chapter_id = context.chapter_id or context.default_chapter_id,
         chapter_title = context.chapter_title,
     }
+    local saved = self.store:save_history(record)
+    if saved == true and type(context.on_history_saved) == "function" then
+        pcall(context.on_history_saved, record)
+    end
+    return saved
 end
 
 function Reader:_show_error(value, stage)
