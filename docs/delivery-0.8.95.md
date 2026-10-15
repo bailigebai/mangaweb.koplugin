@@ -20,7 +20,7 @@ WebDAVManga v0.4.31的安卓证书路径已单独修复，用户确认入口恢�
 - 独立审查未发现Critical/Important；额外核对已有目标文件替换与强制替换失败时旧内容和内存会话回滚。Windows首次创建测试与POSIX替换仿真不替代安卓重启验收。
 - 包：`dist/mangaweb-0.8.95.zip`；SHA256：`eb07a66054ef0f836c615c2a7b05d2d89a66a7ba27f15ca272ed6fbca4ab367d`。
 
-私有安装/诊断证据留在本机交接目录之外，不上传。本版尚未发布GitHub；GitHub最后发布版本仍为v0.8.94。
+私有安装/诊断证据留在本机交接目录之外，不上传。已补发[GitHub测试版v0.8.95](https://github.com/bailigebai/mangaweb.koplugin/releases/tag/v0.8.95)，标签源码为`0bf92a82b72d5a635d3de628ad6159689f6cee41`。公开源码76规格/89语法/9 Python通过；安装包、清单和校验文件已从GitHub重新下载，与本地原始字节一致。建议直接使用包含登录和授权证书修复的v0.8.96。
 
 ## 验收与未完成
 
