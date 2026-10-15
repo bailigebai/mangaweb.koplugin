@@ -189,14 +189,9 @@ function Transport.request_sync(payload, dependencies)
     end
     if http.PROXY then return nil, "proxy_not_supported" end
 
-    local ca_file = dependencies.ca_file
-    if not ca_file then
-        local storage_ok, storage = pcall(require, "datastorage")
-        if not storage_ok or not storage or type(storage.getDataDir) ~= "function" then
-            return nil, "tls_unavailable"
-        end
-        ca_file = storage:getDataDir() .. "/data/ca-bundle.crt"
-    end
+    -- KOReader starts in its runtime directory. On Android getDataDir()
+    -- points to external user storage, which has no packaged CA bundle.
+    local ca_file = dependencies.ca_file or "data/ca-bundle.crt"
     if not read_ca(ca_file, dependencies.read_file) then return nil, "tls_unavailable" end
     if type(socket.gettime) ~= "function" or type(socket.tcp) ~= "function"
         or type(http.request) ~= "function" or type(ssl.wrap) ~= "function"
